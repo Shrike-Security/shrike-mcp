@@ -1,0 +1,58 @@
+{
+  "name": "shrike-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Shrike Security - AI agent security scanning via stdio transport",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "shrike-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "security",
+    "adversarial-testing",
+    "prompt-injection",
+    "ai-security",
+    "llm-security",
+    "model-context-protocol"
+  ],
+  "license": "Apache-2.0",
+  "author": "Shrike Security",
+  "homepage": "https://github.com/Shrike-Security/shrike-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shrike-Security/shrike-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Shrike-Security/shrike-mcp/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  }
+}
