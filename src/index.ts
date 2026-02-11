@@ -57,7 +57,7 @@ Environment Variables:
 Tools: scan_prompt, scan_response, scan_sql_query, scan_file_write,
        scan_web_search, report_bypass, get_threat_intel
 
-Docs: https://github.com/shrike-security/shrike-security-agent`);
+Docs: https://github.com/Shrike-Security/shrike-mcp`);
   process.exit(0);
 }
 
