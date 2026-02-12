@@ -15,6 +15,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
   ErrorCode,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -86,6 +90,8 @@ function createServer(): Server {
     {
       capabilities: {
         tools: {},
+        prompts: {},
+        resources: {},
       },
     }
   );
@@ -260,6 +266,88 @@ function createServer(): Server {
         error instanceof Error ? error.message : 'Tool execution failed'
       );
     }
+  });
+
+  // Register prompts
+  server.setRequestHandler(ListPromptsRequestSchema, async () => {
+    return {
+      prompts: [
+        {
+          name: 'security-audit',
+          description: 'Comprehensive security audit of user input — scans for prompt injection, PII, and toxicity, then returns a recommended action.',
+          arguments: [
+            {
+              name: 'content',
+              description: 'The text content to audit',
+              required: true,
+            },
+          ],
+        },
+      ],
+    };
+  });
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name } = request.params;
+    if (name !== 'security-audit') {
+      throw new McpError(ErrorCode.InvalidRequest, `Unknown prompt: ${name}`);
+    }
+    const content = request.params.arguments?.content || '';
+    return {
+      description: 'Security audit prompt',
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: `Run a security audit on the following content using the scan_prompt tool. Report whether it is safe, and if not, explain the threat type, severity, and recommended action.\n\nContent to audit:\n${content}`,
+          },
+        },
+      ],
+    };
+  });
+
+  // Register resources
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    return {
+      resources: [
+        {
+          uri: 'shrike://threat-categories',
+          name: 'Threat Categories',
+          description: 'List of threat categories detected by Shrike Security',
+          mimeType: 'application/json',
+        },
+      ],
+    };
+  });
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    if (uri !== 'shrike://threat-categories') {
+      throw new McpError(ErrorCode.InvalidRequest, `Unknown resource: ${uri}`);
+    }
+    return {
+      contents: [
+        {
+          uri,
+          mimeType: 'application/json',
+          text: JSON.stringify({
+            categories: [
+              { id: 'prompt_injection', description: 'Attempts to override system instructions or inject unauthorized commands' },
+              { id: 'jailbreak', description: 'Attempts to bypass safety guardrails or content policies' },
+              { id: 'pii_exposure', description: 'Personally identifiable information (SSN, credit cards, emails, phone numbers)' },
+              { id: 'toxicity', description: 'Hostile, threatening, or abusive language' },
+              { id: 'sql_injection', description: 'Malicious SQL patterns (UNION, stacked queries, tautologies)' },
+              { id: 'secrets_exposure', description: 'API keys, passwords, tokens, private keys in content' },
+              { id: 'path_traversal', description: 'Directory traversal attacks (../, system file access)' },
+              { id: 'data_exfiltration', description: 'Attempts to extract sensitive data via search or output channels' },
+              { id: 'system_prompt_leak', description: 'LLM revealing its system instructions in responses' },
+              { id: 'topic_drift', description: 'Response diverging significantly from the original prompt intent' },
+            ],
+          }, null, 2),
+        },
+      ],
+    };
   });
 
   return server;

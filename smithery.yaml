@@ -4,13 +4,18 @@ startCommand:
   type: stdio
   configSchema:
     type: object
+    required: []
     properties:
       apiKey:
         type: string
-        description: "Shrike API key for LLM-powered analysis (optional — regex scanning works without it)"
+        title: "Shrike API Key"
+        description: "API key for LLM-powered semantic analysis layers. Without it, only regex-based scanning is used."
+        default: ""
       backendUrl:
         type: string
-        description: "Custom backend URL (default: https://api.shrikesecurity.com/agent)"
+        title: "Backend URL"
+        description: "Custom backend URL for self-hosted deployments."
+        default: "https://api.shrikesecurity.com/agent"
   commandFunction: |-
     (config) => ({
       command: 'npx',
