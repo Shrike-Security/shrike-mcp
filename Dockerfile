@@ -10,7 +10,8 @@ WORKDIR /build
 COPY package.json package-lock.json ./
 
 # Install all dependencies (including devDependencies for build)
-RUN npm ci
+# --ignore-scripts: prevent "prepare" from running before source is copied
+RUN npm ci --ignore-scripts
 
 # Copy source
 COPY tsconfig.json ./
@@ -30,7 +31,7 @@ WORKDIR /app
 
 # Copy package files and install production deps only
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # Copy built output from builder
 COPY --from=builder /build/dist ./dist
@@ -41,7 +42,7 @@ RUN chown -R shrike:shrike /app
 USER shrike
 
 # Default: stdio transport (MCP standard)
-# Set MCP_TRANSPORT=http for HTTP mode (requires SDK upgrade)
+# Set MCP_TRANSPORT=http and MCP_PORT=8080 for Cloud Run HTTP mode
 ENV NODE_ENV=production
 
 ENTRYPOINT ["node", "dist/index.js"]
