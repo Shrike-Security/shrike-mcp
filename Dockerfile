@@ -24,8 +24,8 @@ RUN npm run build
 FROM node:20-alpine
 
 # Security: run as non-root
-RUN addgroup -g 65534 -S shrike && \
-    adduser -u 65534 -S shrike -G shrike
+RUN addgroup -g 1001 -S shrike && \
+    adduser -u 1001 -S shrike -G shrike
 
 WORKDIR /app
 
