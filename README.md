@@ -281,5 +281,5 @@ Apache License 2.0 — See [LICENSE](LICENSE) for details.
 
 - [GitHub Repository](https://github.com/Shrike-Security/shrike-mcp)
 - [npm Package](https://www.npmjs.com/package/shrike-mcp)
-- [MCP Registry](https://registry.modelcontextprotocol.io/servers/io.github.Shrike-Security/shrike-mcp)
+- [MCP Registry](https://registry.modelcontextprotocol.io) (search "shrike")
 - [Issue Tracker](https://github.com/Shrike-Security/shrike-mcp/issues)
