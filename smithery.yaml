@@ -1,0 +1,23 @@
+# Smithery configuration: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      apiKey:
+        type: string
+        description: "Shrike API key for LLM-powered analysis (optional — regex scanning works without it)"
+      backendUrl:
+        type: string
+        description: "Custom backend URL (default: https://api.shrikesecurity.com/agent)"
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'shrike-mcp'],
+      env: Object.assign(
+        {},
+        config.apiKey ? { SHRIKE_API_KEY: config.apiKey } : {},
+        config.backendUrl ? { SHRIKE_BACKEND_URL: config.backendUrl } : {}
+      )
+    })

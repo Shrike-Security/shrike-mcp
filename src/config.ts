@@ -4,7 +4,9 @@
  */
 
 export interface Config {
-  /** MCP server port */
+  /** Transport mode: 'stdio' (default) or 'http' */
+  transport: 'stdio' | 'http';
+  /** HTTP server port (used when transport is 'http') */
   port: number;
   /** Backend API URL for scan requests */
   backendUrl: string;
@@ -32,7 +34,8 @@ function getEnvNumber(key: string, defaultValue: number): number {
 }
 
 export const config: Config = {
-  port: getEnvNumber('MCP_PORT', 3000),
+  transport: (process.env.MCP_TRANSPORT === 'http' ? 'http' : 'stdio') as 'stdio' | 'http',
+  port: getEnvNumber('MCP_PORT', 8000),
   // Default uses load balancer for scalability. Override with SHRIKE_BACKEND_URL for VPC deployments.
   backendUrl: getEnvOrDefault('SHRIKE_BACKEND_URL', 'https://api.shrikesecurity.com/agent'),
   // API key for authenticated scans (enables LLM layer L7-L8)
@@ -50,7 +53,8 @@ export const config: Config = {
 export function logConfig(): void {
   // Use stderr to avoid interfering with MCP JSON-RPC protocol on stdout
   console.error('MCP Server Configuration:');
-  console.error(`  Port: ${config.port}`);
+  console.error(`  Transport: ${config.transport}`);
+  console.error(`  Port: ${config.port} ${config.transport === 'stdio' ? '(unused in stdio mode)' : ''}`);
   console.error(`  Backend URL: ${config.backendUrl}`);
   console.error(`  API Key: ${config.apiKey ? '***' + config.apiKey.slice(-4) + ' (authenticated - L1-L8 full scan)' : 'NOT SET (free tier - L1-L4 regex only)'}`);
   console.error(`  Scan Timeout: ${config.scanTimeoutMs}ms`);

@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 /**
  * Shrike MCP Server
- * AI Agent security scanning via Model Context Protocol (stdio transport)
+ * AI Agent security scanning via Model Context Protocol
+ * Supports stdio (default) and HTTP (Streamable HTTP) transports
  */
 
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { createServer as createHttpServer } from 'http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -50,9 +53,16 @@ Usage:
 Environment Variables:
   SHRIKE_API_KEY               API key for authenticated scans (enables LLM layers)
   SHRIKE_BACKEND_URL           Backend API URL (default: https://api.shrikesecurity.com/agent)
+  MCP_TRANSPORT                Transport mode: stdio (default) or http
+  MCP_PORT                     HTTP server port (default: 8000, used in http mode)
   MCP_SCAN_TIMEOUT_MS          Scan timeout in ms (default: 15000)
   MCP_RATE_LIMIT_PER_MINUTE    Rate limit per customer (default: 100)
   MCP_DEBUG                    Enable debug logging (default: false)
+
+HTTP Endpoints (when MCP_TRANSPORT=http):
+  POST /mcp                    MCP Streamable HTTP endpoint (stateless)
+  GET  /health                 Health check for load balancers
+  GET  /.well-known/agent-card.json  Agent discovery metadata
 
 Tools: scan_prompt, scan_response, scan_sql_query, scan_file_write,
        scan_web_search, report_bypass, get_threat_intel
@@ -252,14 +262,32 @@ function createServer(): Server {
 }
 
 /**
- * Main entry point
+ * Returns the agent card JSON for AgentCore / .well-known discovery
  */
-async function main(): Promise<void> {
-  // Use stderr for all logging to avoid interfering with MCP JSON-RPC on stdout
-  console.error('Shrike MCP Server starting...');
-  logConfig();
+function getAgentCard(): object {
+  return {
+    name: 'shrike-mcp',
+    version: VERSION,
+    description: 'AI agent security scanner — prompt injection detection, SQL injection, PII isolation, threat intel.',
+    url: `http://localhost:${config.port}/mcp`,
+    transport: { type: 'streamable-http' },
+    capabilities: { tools: true },
+    tools: [
+      { name: 'scan_prompt', description: 'Scan user prompts for injection attacks and adversarial inputs' },
+      { name: 'scan_response', description: 'Scan LLM responses for data leaks and manipulation' },
+      { name: 'scan_sql_query', description: 'Detect SQL injection in AI-generated queries' },
+      { name: 'scan_file_write', description: 'Validate file write operations for path traversal and malicious content' },
+      { name: 'scan_web_search', description: 'Check search queries for SSRF and domain abuse' },
+      { name: 'report_bypass', description: 'Report novel attack patterns for community defense' },
+      { name: 'get_threat_intel', description: 'Retrieve latest threat patterns and detection signatures' },
+    ],
+  };
+}
 
-  // Check for API key in environment (for stdio transport)
+/**
+ * Authenticates the server using SHRIKE_API_KEY from environment
+ */
+async function authenticate(): Promise<void> {
   const apiKey = process.env.SHRIKE_API_KEY;
   if (apiKey) {
     console.error('Validating API key...');
@@ -274,16 +302,112 @@ async function main(): Promise<void> {
     console.error('No SHRIKE_API_KEY set, running without authentication');
     currentCustomerId = 'anonymous';
   }
+}
 
+/**
+ * Start in stdio mode (default — for npx, Claude Desktop, Cursor, etc.)
+ */
+async function startStdio(): Promise<void> {
   const server = createServer();
-
-  // Use stdio transport (standard for MCP)
   const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error('Shrike MCP Server running on stdio transport');
+}
+
+/**
+ * Start in HTTP mode (for AWS AgentCore, GCP Cloud Run, Docker containers)
+ * Stateless: creates a new Server + Transport per request (SDK recommended pattern)
+ */
+async function startHttp(): Promise<void> {
+  const httpServer = createHttpServer(async (req, res) => {
+    const url = req.url || '/';
+    const method = req.method || 'GET';
+
+    // Health check — ALB, Cloud Run, AgentCore probes
+    if (url === '/health' || url === '/healthz' || url === '/ping') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        version: VERSION,
+        service: 'shrike-mcp',
+        transport: 'http',
+        customer: currentCustomerId,
+        timestamp: new Date().toISOString(),
+      }));
+      return;
+    }
+
+    // Agent card — AgentCore discovery
+    if (url === '/.well-known/agent-card.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getAgentCard()));
+      return;
+    }
+
+    // MCP endpoint — Streamable HTTP transport
+    if (url === '/mcp') {
+      if (method === 'POST') {
+        const server = createServer();
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined, // Stateless — required for AgentCore
+        });
+        try {
+          await server.connect(transport);
+          await transport.handleRequest(req, res);
+          res.on('close', () => {
+            transport.close();
+            server.close();
+          });
+        } catch (error) {
+          console.error('Error handling MCP request:', error);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              jsonrpc: '2.0',
+              error: { code: -32603, message: 'Internal server error' },
+              id: null,
+            }));
+          }
+        }
+        return;
+      }
+
+      // GET and DELETE not supported in stateless mode
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Method not allowed.' },
+        id: null,
+      }));
+      return;
+    }
+
+    // 404 for everything else
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health', '/.well-known/agent-card.json'] }));
+  });
+
+  httpServer.listen(config.port, '0.0.0.0', () => {
+    console.error(`Shrike MCP Server running on http://0.0.0.0:${config.port}`);
+    console.error(`  MCP endpoint: http://0.0.0.0:${config.port}/mcp`);
+    console.error(`  Health check: http://0.0.0.0:${config.port}/health`);
+    console.error(`  Agent card:   http://0.0.0.0:${config.port}/.well-known/agent-card.json`);
+  });
+}
+
+/**
+ * Main entry point
+ */
+async function main(): Promise<void> {
+  console.error('Shrike MCP Server starting...');
+  logConfig();
+
+  await authenticate();
 
   // Heartbeat logging (for monitoring)
   const heartbeatInterval = setInterval(() => {
     if (config.debug) {
-      console.error(`[heartbeat] active, customer=${currentCustomerId}`);
+      console.error(`[heartbeat] active, customer=${currentCustomerId}, transport=${config.transport}`);
     }
   }, config.heartbeatIntervalMs);
 
@@ -300,9 +424,11 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  // Connect and run
-  await server.connect(transport);
-  console.error('Shrike MCP Server running on stdio transport');
+  if (config.transport === 'http') {
+    await startHttp();
+  } else {
+    await startStdio();
+  }
 }
 
 main().catch((error) => {

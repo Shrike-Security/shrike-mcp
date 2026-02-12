@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Shrike-Security/shrike-mcp",
+  "description": "AI agent security scanner — prompt injection detection, SQL injection, PII isolation, threat intel.",
+  "title": "Shrike Security",
+  "repository": {
+    "url": "https://github.com/Shrike-Security/shrike-mcp",
+    "source": "github"
+  },
+  "version": "1.0.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "shrike-mcp",
+      "version": "1.0.1",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

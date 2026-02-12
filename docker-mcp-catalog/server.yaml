@@ -1,0 +1,41 @@
+name: shrike-mcp
+image: mcp/shrike-mcp
+type: server
+meta:
+  category: dev-tools
+  tags:
+    - security
+    - ai-security
+    - prompt-injection
+    - llm-security
+    - adversarial-testing
+about:
+  title: Shrike Security
+  description: |
+    AI agent security scanner that protects LLM-powered applications from prompt injection,
+    data exfiltration, and adversarial attacks via the Model Context Protocol.
+
+    7 specialized security tools:
+    - scan_prompt: Detect prompt injection and jailbreak attempts
+    - scan_response: Scan LLM outputs for data leaks and manipulation
+    - scan_sql_query: Detect SQL injection in AI-generated queries
+    - scan_file_write: Validate file writes for path traversal and malicious content
+    - scan_web_search: Check search queries for SSRF and domain abuse
+    - report_bypass: Report novel attack patterns for community defense
+    - get_threat_intel: Retrieve latest threat patterns and detection signatures
+
+    9-layer detection pipeline: regex → unicode normalization → malformed input →
+    encoding detection → token analysis → semantic analysis → visual similarity →
+    LLM analysis → response intelligence.
+  icon: https://avatars.githubusercontent.com/u/Shrike-Security
+source:
+  project: https://github.com/Shrike-Security/shrike-mcp
+  commit: 8163e9e18dc7003ffebf4eea9c40c5957145b955
+config:
+  description: |
+    Shrike MCP works out of the box with regex-based scanning (no API key needed).
+    Add a Shrike API key to enable LLM-powered semantic analysis layers.
+  secrets:
+    - name: shrike-mcp.api_key
+      env: SHRIKE_API_KEY
+      example: shrike_your_api_key_here
