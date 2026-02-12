@@ -3,3 +3,5 @@ dist/
 *.log
 .env
 .DS_Store
+.mcpregistry_*
+mcp-publisher

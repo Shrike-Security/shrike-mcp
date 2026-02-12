@@ -44,6 +44,8 @@ Without an API key, scans run on the free tier (regex-only layers L1–L4). With
 | `SHRIKE_BACKEND_URL` | URL of the Shrike backend API | `https://api.shrikesecurity.com/agent` |
 | `MCP_SCAN_TIMEOUT_MS` | Timeout for scan requests (ms) | `15000` |
 | `MCP_RATE_LIMIT_PER_MINUTE` | Max requests per minute per customer | `100` |
+| `MCP_TRANSPORT` | Transport mode: `stdio` (default) or `http` | `stdio` |
+| `MCP_PORT` | HTTP server port (used when `MCP_TRANSPORT=http`) | `8000` |
 | `MCP_DEBUG` | Enable debug logging (`true`/`false`) | `false` |
 
 ## Available Tools
@@ -249,33 +251,7 @@ This prevents bypass attacks via service disruption.
 2. **No offline mode** — Requires network access to Shrike backend
 3. **Response Intelligence requires original prompt** — `original_prompt` param is optional but recommended for full L8 analysis
 4. **Rate limits are MCP-side only** — Backend has separate per-tier limits
-5. **stdio transport only** — No HTTP server mode; requires MCP-compatible host
-
-## Self-Hosting
-
-To run your own Shrike backend:
-
-```bash
-git clone https://github.com/shrike-security/shrike-security-agent.git
-cd shrike-security-agent/backend
-go run ./cmd/refactored-agent
-```
-
-Then point the MCP server to your local backend:
-
-```json
-{
-  "mcpServers": {
-    "shrike-security": {
-      "command": "npx",
-      "args": ["shrike-mcp"],
-      "env": {
-        "SHRIKE_BACKEND_URL": "http://localhost:8080"
-      }
-    }
-  }
-}
-```
+5. **HTTP transport is stateless** — Each request creates a new server instance; no session persistence across requests
 
 ## License
 
@@ -288,6 +264,12 @@ Apache License 2.0 — See [LICENSE](LICENSE) for details.
 
 ## Changelog
 
+### v1.1.0 (February 12, 2026)
+- Dual transport: stdio (default) + HTTP (Streamable HTTP)
+- SDK upgrade to `@modelcontextprotocol/sdk@1.26.0`
+- Published to [MCP Registry](https://registry.modelcontextprotocol.io)
+- Health check, agent card, and Docker support for cloud deployments
+
 ### v1.0.0 (February 10, 2026)
 - Initial public release
 - 7 MCP tools for AI agent security
@@ -298,5 +280,6 @@ Apache License 2.0 — See [LICENSE](LICENSE) for details.
 ## Links
 
 - [GitHub Repository](https://github.com/Shrike-Security/shrike-mcp)
-- [Issue Tracker](https://github.com/Shrike-Security/shrike-mcp/issues)
 - [npm Package](https://www.npmjs.com/package/shrike-mcp)
+- [MCP Registry](https://registry.modelcontextprotocol.io/servers/io.github.Shrike-Security/shrike-mcp)
+- [Issue Tracker](https://github.com/Shrike-Security/shrike-mcp/issues)

@@ -140,13 +140,17 @@ function createServer(): Server {
 
         case 'report_bypass': {
           const input = args as {
-            prompt: string;
+            prompt?: string;
+            filePath?: string;
+            fileContent?: string;
+            sqlQuery?: string;
+            searchQuery?: string;
             mutationType?: string;
             category?: string;
             notes?: string;
           };
-          if (!input.prompt) {
-            throw new McpError(ErrorCode.InvalidParams, 'prompt is required');
+          if (!input.prompt && !input.filePath && !input.fileContent && !input.sqlQuery && !input.searchQuery) {
+            throw new McpError(ErrorCode.InvalidParams, 'At least one of prompt, filePath, fileContent, sqlQuery, or searchQuery is required');
           }
           const result = await reportBypass(input);
           return {
