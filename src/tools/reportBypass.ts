@@ -212,4 +212,11 @@ The bypass will be analyzed and may generate a new detection pattern.`,
     },
     required: [],
   },
+  annotations: {
+    title: 'Report Bypass',
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
 };

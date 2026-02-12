@@ -355,4 +355,11 @@ Returns:
     },
     required: ['path', 'content'],
   },
+  annotations: {
+    title: 'Scan File Write',
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
 };

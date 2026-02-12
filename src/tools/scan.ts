@@ -573,4 +573,11 @@ PII never leaves the MCP process when redaction is enabled.`,
     },
     required: ['content'],
   },
+  annotations: {
+    title: 'Scan Prompt',
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
 };

@@ -115,4 +115,11 @@ export const getThreatIntelTool = {
     },
     required: [],
   },
+  annotations: {
+    title: 'Get Threat Intel',
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
 };

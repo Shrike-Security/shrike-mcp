@@ -262,4 +262,11 @@ Returns:
     },
     required: ['query'],
   },
+  annotations: {
+    title: 'Scan SQL Query',
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
 };

@@ -413,4 +413,11 @@ Returns:
     },
     required: ['response'],
   },
+  annotations: {
+    title: 'Scan Response',
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
 };

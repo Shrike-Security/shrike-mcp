@@ -316,4 +316,11 @@ Returns:
     },
     required: ['query'],
   },
+  annotations: {
+    title: 'Scan Web Search',
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
 };
