@@ -165,7 +165,11 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       },
     };
 
-    logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+    if (config.debug) {
+      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+    } else {
+      console.error(`[file] ${requestId} safe=false action=block reason=size_limit time=${Date.now() - startTime}ms`);
+    }
     return sanitizeFileWriteResult(internalResult, requestId);
   }
 
@@ -193,7 +197,11 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       clearTimeout(timeoutId);
       console.error(`File path scan backend returned ${pathResponse.status}`);
       const internalResult = createFailClosedResponse(Date.now() - startTime, 'Backend error', pathLength, contentLength, fileExtension);
-      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+      if (config.debug) {
+        logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+      } else {
+        console.error(`[file] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
+      }
       return sanitizeFileWriteResult(internalResult, requestId);
     }
 
@@ -230,7 +238,11 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     if (!contentResponse.ok) {
       console.error(`File content scan backend returned ${contentResponse.status}`);
       const internalResult = createFailClosedResponse(Date.now() - startTime, 'Backend error', pathLength, contentLength, fileExtension);
-      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+      if (config.debug) {
+        logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+      } else {
+        console.error(`[file] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
+      }
       return sanitizeFileWriteResult(internalResult, requestId);
     }
 
@@ -276,8 +288,12 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       },
     };
 
-    // Log full internal details for debugging (not exposed to client)
-    logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+    // Log scan result
+    if (config.debug) {
+      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+    } else {
+      console.error(`[file] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
+    }
 
     // Return sanitized response (protects IP)
     return sanitizeFileWriteResult(internalResult, requestId);
@@ -290,11 +306,15 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       console.warn(`File scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', pathLength, contentLength, fileExtension);
     } else {
-      console.error('File scan failed:', error);
+      console.error(`File scan failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Scan error', pathLength, contentLength, fileExtension);
     }
 
-    logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+    if (config.debug) {
+      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_file_write'));
+    } else {
+      console.error(`[file] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
+    }
     return sanitizeFileWriteResult(internalResult, requestId);
   }
 }

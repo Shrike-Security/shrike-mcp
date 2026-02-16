@@ -103,7 +103,7 @@ export class RateLimiter {
     }
 
     if (removed > 0 && config.debug) {
-      console.log(`RateLimiter: Cleaned up ${removed} stale buckets`);
+      console.error(`RateLimiter: Cleaned up ${removed} stale buckets`);
     }
   }
 

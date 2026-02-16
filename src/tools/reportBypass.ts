@@ -134,7 +134,7 @@ export async function reportBypass(input: ReportBypassInput): Promise<ReportBypa
       message: data.message || 'Bypass reported successfully',
     };
   } catch (error) {
-    console.error('Report bypass failed:', error);
+    console.error(`Report bypass failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     return {
       success: false,
       message: error instanceof Error ? error.message : 'Report failed',

@@ -169,7 +169,11 @@ export async function scanSQLQuery(input: SQLQueryInput, customerId: string = 'a
     if (!response.ok) {
       console.error(`SQL scan backend returned ${response.status}`);
       const internalResult = createFailClosedResponse(Date.now() - startTime, 'Backend error', queryLength, statementType);
-      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_sql_query'));
+      if (config.debug) {
+        logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_sql_query'));
+      } else {
+        console.error(`[sql] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
+      }
       return sanitizeSQLResult(internalResult, requestId);
     }
 
@@ -199,8 +203,12 @@ export async function scanSQLQuery(input: SQLQueryInput, customerId: string = 'a
       },
     };
 
-    // Log full internal details for debugging (not exposed to client)
-    logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_sql_query'));
+    // Log scan result
+    if (config.debug) {
+      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_sql_query'));
+    } else {
+      console.error(`[sql] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
+    }
 
     // Return sanitized response (protects IP)
     return sanitizeSQLResult(internalResult, requestId);
@@ -213,11 +221,15 @@ export async function scanSQLQuery(input: SQLQueryInput, customerId: string = 'a
       console.warn(`SQL scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', queryLength, statementType);
     } else {
-      console.error('SQL scan failed:', error);
+      console.error(`SQL scan failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Scan error', queryLength, statementType);
     }
 
-    logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_sql_query'));
+    if (config.debug) {
+      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_sql_query'));
+    } else {
+      console.error(`[sql] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
+    }
     return sanitizeSQLResult(internalResult, requestId);
   }
 }

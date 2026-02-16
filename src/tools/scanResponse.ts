@@ -21,8 +21,6 @@ import {
   type SanitizedResponse,
 } from '../utils/responseFormatter.js';
 import { rehydratePII, type RedactionEntry } from '../utils/piiRedactor.js';
-
-// Reuse types from scan.ts
 import type { ScanResult, BackendResponse } from './scan.js';
 
 /**
@@ -158,7 +156,11 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
       },
     };
 
-    logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    if (config.debug) {
+      logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    } else {
+      console.error(`[response] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
+    }
     return sanitizeScanResult(internalResult, requestId);
   }
 
@@ -199,14 +201,22 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
     if (!response.ok) {
       console.error(`Response scan backend returned ${response.status}`);
       const internalResult = createFailClosedResponse(Date.now() - startTime, 'Backend error');
-      logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+      if (config.debug) {
+        logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+      } else {
+        console.error(`[response] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
+      }
       return sanitizeScanResult(internalResult, requestId);
     }
 
     const data = await response.json() as BackendResponse;
     const internalResult = transformBackendResponse(data, Date.now() - startTime);
 
-    logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    if (config.debug) {
+      logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    } else {
+      console.error(`[response] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
+    }
 
     const sanitized = sanitizeScanResult(internalResult, requestId);
 
@@ -235,15 +245,18 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
         errorMessage = 'Analysis timeout';
       } else {
         console.error(`Response scan failed: ${error.name}: ${error.message}`);
-        if (error.cause) console.error('Cause:', error.cause);
         errorMessage = `${error.name}: ${error.message}`;
       }
     } else {
-      console.error('Response scan failed with non-Error:', error);
+      console.error('Response scan failed with unknown error type');
     }
 
     const internalResult = createFailClosedResponse(Date.now() - startTime, errorMessage);
-    logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    if (config.debug) {
+      logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    } else {
+      console.error(`[response] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
+    }
     return sanitizeScanResult(internalResult, requestId);
   }
 }

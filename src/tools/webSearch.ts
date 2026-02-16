@@ -169,7 +169,11 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
     if (!response.ok) {
       console.error(`Web search scan backend returned ${response.status}`);
       const internalResult = createFailClosedResponse(Date.now() - startTime, 'Backend error', input.query.length, domainsChecked);
-      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_web_search'));
+      if (config.debug) {
+        logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_web_search'));
+      } else {
+        console.error(`[web] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
+      }
       return sanitizeWebSearchResult(internalResult, requestId);
     }
 
@@ -259,8 +263,12 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
       },
     };
 
-    // Log full internal details for debugging (not exposed to client)
-    logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_web_search'));
+    // Log scan result
+    if (config.debug) {
+      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_web_search'));
+    } else {
+      console.error(`[web] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
+    }
 
     // Return sanitized response (protects IP)
     return sanitizeWebSearchResult(internalResult, requestId);
@@ -273,11 +281,15 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
       console.warn(`Web search scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', input.query.length, domainsChecked);
     } else {
-      console.error('Web search scan failed:', error);
+      console.error(`Web search scan failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Scan error', input.query.length, domainsChecked);
     }
 
-    logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_web_search'));
+    if (config.debug) {
+      logInternalDetails(extractSpecializedInternalDetails(internalResult, requestId, customerId, 'scan_web_search'));
+    } else {
+      console.error(`[web] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
+    }
     return sanitizeWebSearchResult(internalResult, requestId);
   }
 }

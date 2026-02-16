@@ -84,7 +84,7 @@ export async function getThreatIntel(input: ThreatIntelInput): Promise<ThreatInt
       lastUpdated: data.last_updated,
     };
   } catch (error) {
-    console.error('Get threat intel failed:', error);
+    console.error(`Get threat intel failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     return {
       success: false,
       patterns: [],

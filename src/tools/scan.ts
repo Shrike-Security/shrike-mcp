@@ -310,7 +310,11 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
       },
     };
 
-    logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    if (config.debug) {
+      logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    } else {
+      console.error(`[scan] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
+    }
     return sanitizeScanResult(internalResult, requestId);
   }
 
@@ -381,14 +385,22 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
     if (!response.ok) {
       console.error(`Scan backend returned ${response.status}`);
       const internalResult = createFailClosedResponse(Date.now() - startTime, 'Backend error');
-      logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+      if (config.debug) {
+        logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+      } else {
+        console.error(`[scan] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
+      }
       return { ...sanitizeScanResult(internalResult, requestId), pii_redaction: piiRedaction };
     }
 
     const data = await response.json() as BackendResponse;
     const internalResult = transformBackendResponse(data, Date.now() - startTime);
 
-    logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    if (config.debug) {
+      logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    } else {
+      console.error(`[scan] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
+    }
 
     return { ...sanitizeScanResult(internalResult, requestId), pii_redaction: piiRedaction };
 
@@ -402,15 +414,18 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
         errorMessage = 'Analysis timeout';
       } else {
         console.error(`Scan failed: ${error.name}: ${error.message}`);
-        if (error.cause) console.error('Cause:', error.cause);
         errorMessage = `${error.name}: ${error.message}`;
       }
     } else {
-      console.error('Scan failed with non-Error:', error);
+      console.error('Scan failed with unknown error type');
     }
 
     internalResult = createFailClosedResponse(Date.now() - startTime, errorMessage);
-    logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    if (config.debug) {
+      logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
+    } else {
+      console.error(`[scan] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
+    }
     return { ...sanitizeScanResult(internalResult, requestId), pii_redaction: piiRedaction };
   }
 }

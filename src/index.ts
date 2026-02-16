@@ -260,7 +260,7 @@ function createServer(): Server {
       if (error instanceof McpError) {
         throw error;
       }
-      console.error(`Tool ${name} failed:`, error);
+      console.error(`Tool ${name} failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw new McpError(
         ErrorCode.InternalError,
         error instanceof Error ? error.message : 'Tool execution failed'
@@ -451,7 +451,7 @@ async function startHttp(): Promise<void> {
             server.close();
           });
         } catch (error) {
-          console.error('Error handling MCP request:', error);
+          console.error(`Error handling MCP request: ${error instanceof Error ? error.message : 'Unknown error'}`);
           if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -524,6 +524,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  console.error(`Fatal error: ${error instanceof Error ? error.message : 'Unknown error'}`);
   process.exit(1);
 });

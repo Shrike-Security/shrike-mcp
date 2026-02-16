@@ -72,7 +72,7 @@ export async function validateApiKey(apiKey: string): Promise<AuthResult> {
 
     return result;
   } catch (error) {
-    console.error('API key validation failed:', error);
+    console.error(`API key validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     return {
       valid: false,
       error: error instanceof Error ? error.message : 'Validation failed',
