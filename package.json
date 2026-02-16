@@ -1,7 +1,7 @@
 {
   "name": "shrike-mcp",
   "mcpName": "io.github.Shrike-Security/shrike-mcp",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "MCP server for Shrike Security - AI agent security scanning (stdio + HTTP)",
   "type": "module",
   "main": "./dist/index.js",
