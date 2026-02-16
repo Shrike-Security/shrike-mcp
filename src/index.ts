@@ -33,6 +33,7 @@ import { scanWebSearch, scanWebSearchTool } from './tools/webSearch.js';
 import { scanSQLQuery, scanSQLQueryTool } from './tools/sqlQuery.js';
 import { scanFileWrite, scanFileWriteTool } from './tools/fileWrite.js';
 import { scanResponse, scanResponseTool } from './tools/scanResponse.js';
+import { syncPIIPatterns } from './utils/piiSync.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -495,6 +496,7 @@ async function main(): Promise<void> {
   logConfig();
 
   await authenticate();
+  await syncPIIPatterns();
 
   // Heartbeat logging (for monitoring)
   const heartbeatInterval = setInterval(() => {

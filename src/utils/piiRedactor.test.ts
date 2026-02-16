@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { redactPII, rehydratePII, getRedactionSummary } from './piiRedactor.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { redactPII, rehydratePII, getRedactionSummary, updatePIIPatterns, getPIIPatternCount } from './piiRedactor.js';
 
 describe('redactPII', () => {
   it('should return unchanged text when no PII is found', () => {
@@ -42,10 +42,24 @@ describe('redactPII', () => {
     expect(result.redactions[0].type).toBe('ssn');
   });
 
-  it('should redact credit card numbers', () => {
+  it('should redact credit card numbers (contiguous)', () => {
     const result = redactPII('Card number: 4111111111111111');
     expect(result.piiDetected).toBe(true);
     expect(result.redactedText).toBe('Card number: [CARD_1]');
+    expect(result.redactions[0].type).toBe('credit_card');
+  });
+
+  it('should redact credit card numbers (hyphenated)', () => {
+    const result = redactPII('My card is 4532-8721-0039-4456');
+    expect(result.piiDetected).toBe(true);
+    expect(result.redactedText).toBe('My card is [CARD_1]');
+    expect(result.redactions[0].original).toBe('4532-8721-0039-4456');
+  });
+
+  it('should redact credit card numbers (spaced)', () => {
+    const result = redactPII('Card: 5425 2334 3010 9903');
+    expect(result.piiDetected).toBe(true);
+    expect(result.redactedText).toBe('Card: [CARD_1]');
     expect(result.redactions[0].type).toBe('credit_card');
   });
 
@@ -153,5 +167,40 @@ describe('getRedactionSummary', () => {
 
   it('should return empty object for no redactions', () => {
     expect(getRedactionSummary([])).toEqual({});
+  });
+});
+
+describe('updatePIIPatterns', () => {
+  let originalCount: number;
+
+  // Save original count and restore after each test
+  afterEach(() => {
+    // We can't easily restore the original patterns, but tests below
+    // are self-contained and don't affect other test suites
+  });
+
+  it('should report initial pattern count', () => {
+    originalCount = getPIIPatternCount();
+    expect(originalCount).toBeGreaterThan(0);
+  });
+
+  it('should replace patterns with custom set', () => {
+    const customPatterns = [
+      { name: 'test_iban', regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}[A-Z0-9]{0,16}\b/g, prefix: 'IBAN' },
+    ];
+    updatePIIPatterns(customPatterns);
+    expect(getPIIPatternCount()).toBe(1);
+
+    // Should now detect IBAN
+    const result = redactPII('Transfer to GB29NWBK60161331926819');
+    expect(result.piiDetected).toBe(true);
+    expect(result.redactedText).toBe('Transfer to [IBAN_1]');
+    expect(result.redactions[0].type).toBe('test_iban');
+  });
+
+  it('should no longer detect old patterns after replacement', () => {
+    // Patterns were replaced in previous test — only IBAN remains
+    const result = redactPII('Email john@acme.com');
+    expect(result.piiDetected).toBe(false);
   });
 });

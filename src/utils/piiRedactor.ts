@@ -28,10 +28,11 @@ export interface RedactionResult {
 }
 
 /**
- * PII patterns matching the backend's PIISanitizer patterns.
+ * Default PII patterns (fallback when backend is unreachable).
+ * At startup, syncPIIPatterns() replaces these with the backend's canonical list.
  * Order matters: more specific patterns first to avoid partial matches.
  */
-const PII_PATTERNS: PIIPattern[] = [
+let PII_PATTERNS: PIIPattern[] = [
   // AWS keys (very specific, check first)
   {
     name: 'aws_key',
@@ -44,10 +45,10 @@ const PII_PATTERNS: PIIPattern[] = [
     regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/g,
     prefix: 'PRIVKEY',
   },
-  // Credit card numbers (Visa, MC, Amex, Discover)
+  // Credit card numbers (Visa, MC, Amex, Discover) — with optional hyphens/spaces
   {
     name: 'credit_card',
-    regex: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/g,
+    regex: /\b(?:4[0-9]{3}[-\s]?[0-9]{4}[-\s]?[0-9]{4}[-\s]?[0-9]{4}|5[1-5][0-9]{2}[-\s]?[0-9]{4}[-\s]?[0-9]{4}[-\s]?[0-9]{4}|3[47][0-9]{2}[-\s]?[0-9]{6}[-\s]?[0-9]{5}|6(?:011|5[0-9]{2})[-\s]?[0-9]{4}[-\s]?[0-9]{4}[-\s]?[0-9]{4})\b/g,
     prefix: 'CARD',
   },
   // SSN (US)
@@ -229,4 +230,19 @@ export function getRedactionSummary(
     summary[entry.type] = (summary[entry.type] || 0) + 1;
   }
   return summary;
+}
+
+/**
+ * Replaces the active PII patterns with a new set (e.g. fetched from backend).
+ * Called by piiSync.ts at startup after fetching patterns from the API.
+ */
+export function updatePIIPatterns(patterns: PIIPattern[]): void {
+  PII_PATTERNS = patterns;
+}
+
+/**
+ * Returns the current number of active PII patterns.
+ */
+export function getPIIPatternCount(): number {
+  return PII_PATTERNS.length;
 }
