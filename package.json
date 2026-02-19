@@ -1,8 +1,8 @@
 {
   "name": "shrike-mcp",
   "mcpName": "io.github.Shrike-Security/shrike-mcp",
-  "version": "1.1.5",
-  "description": "MCP server for Shrike Security - AI agent security scanning (stdio + HTTP)",
+  "version": "2.0.0",
+  "description": "MCP server that gives AI agents 7 security tools powered by a 9-layer detection pipeline. Scans prompts, responses, SQL, file writes, and web searches for injection attacks, PII leaks, and policy violations.",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
@@ -20,15 +20,19 @@
   "keywords": [
     "mcp",
     "security",
-    "adversarial-testing",
-    "prompt-injection",
     "ai-security",
     "llm-security",
-    "model-context-protocol"
+    "prompt-injection",
+    "agent-security",
+    "model-context-protocol",
+    "adversarial-testing",
+    "pii-detection",
+    "webmcp",
+    "prompt-injection-detection"
   ],
   "license": "Apache-2.0",
   "author": "Shrike Security",
-  "homepage": "https://github.com/Shrike-Security/shrike-mcp#readme",
+  "homepage": "https://shrikesecurity.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Shrike-Security/shrike-mcp.git"
@@ -43,6 +47,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
