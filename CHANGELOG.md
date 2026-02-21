@@ -10,7 +10,7 @@ First stable release. Signals production readiness — v1.x was the pre-release 
 
 ### Added
 - Full 9-layer detection pipeline on all tiers (including community)
-- Community tier: 10K scans/month, all 7 tools, full L1–L8 pipeline, no credit card
+- Community tier: 1K scans/month, all 7 tools, full L1–L8 pipeline, no credit card
 - README rewritten for product launch (quick start, tools table, pipeline overview, client configs)
 - MCP client config examples for Claude Desktop, Cursor, and Windsurf
 - CHANGELOG.md (this file)

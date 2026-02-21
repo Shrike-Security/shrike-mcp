@@ -82,7 +82,7 @@ All layers run on every tier — community users get the same detection quality 
 |---------|----------|
 | Detection Pipeline | Full 9-layer (L1–L8) |
 | MCP Tools | All 7 |
-| Scan Volume | 10,000 scans/month |
+| Scan Volume | 1,000 scans/month |
 | Rate Limit | 10 scans/minute |
 | Multilingual | 14 explicit languages + 100+ via LLM |
 | Compliance Catalogues | GDPR, HIPAA, ISO 27001, SOC 2, WebMCP |
