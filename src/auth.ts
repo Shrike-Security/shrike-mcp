@@ -10,6 +10,7 @@ export interface AuthResult {
   customerId?: string;
   tier?: string;
   error?: string;
+  transient?: boolean;
 }
 
 // Cache validated keys for 5 minutes to reduce backend calls
@@ -31,53 +32,72 @@ export async function validateApiKey(apiKey: string): Promise<AuthResult> {
     return cached.result;
   }
 
-  try {
-    const response = await fetch(`${config.backendUrl}/api/internal/validate-key`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ api_key: apiKey }),
-    });
+  const MAX_RETRIES = 2;
+  const RETRY_DELAYS = [1000, 3000]; // 1s, 3s backoff
+  let lastError: string = 'Unknown error';
 
-    if (!response.ok) {
-      const result: AuthResult = {
-        valid: false,
-        error: `Backend returned ${response.status}`,
-      };
-      return result;
-    }
-
-    const data = await response.json() as {
-      valid: boolean;
-      customer_id?: string;
-      tier?: string;
-      error?: string;
-    };
-
-    const result: AuthResult = {
-      valid: data.valid,
-      customerId: data.customer_id,
-      tier: data.tier,
-      error: data.error,
-    };
-
-    // Cache successful validations
-    if (result.valid) {
-      keyCache.set(apiKey, {
-        result,
-        expiresAt: Date.now() + CACHE_TTL_MS,
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${config.backendUrl}/api/internal/validate-key`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ api_key: apiKey }),
       });
-    }
 
-    return result;
-  } catch (error) {
-    console.error(`API key validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    return {
-      valid: false,
-      error: error instanceof Error ? error.message : 'Validation failed',
-    };
+      if (!response.ok) {
+        // 5xx = transient server error (deploy, cold start) — retry
+        if (response.status >= 500) {
+          lastError = `Backend returned ${response.status}`;
+          if (attempt < MAX_RETRIES) {
+            console.error(`API key validation got ${response.status}, retrying in ${RETRY_DELAYS[attempt]}ms (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]));
+            continue;
+          }
+          // All retries exhausted — return transient failure
+          return { valid: false, transient: true, error: lastError };
+        }
+        // 4xx = permanent auth failure — no retry
+        return { valid: false, error: `Backend returned ${response.status}` };
+      }
+
+      const data = await response.json() as {
+        valid: boolean;
+        customer_id?: string;
+        tier?: string;
+        error?: string;
+      };
+
+      const result: AuthResult = {
+        valid: data.valid,
+        customerId: data.customer_id,
+        tier: data.tier,
+        error: data.error,
+      };
+
+      // Cache successful validations
+      if (result.valid) {
+        keyCache.set(apiKey, {
+          result,
+          expiresAt: Date.now() + CACHE_TTL_MS,
+        });
+      }
+
+      return result;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Validation failed';
+      if (attempt < MAX_RETRIES) {
+        console.error(`API key validation failed (${lastError}), retrying in ${RETRY_DELAYS[attempt]}ms (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]));
+        continue;
+      }
+    }
   }
+
+  // All retries exhausted on network/server errors — transient failure
+  console.error(`API key validation failed after ${MAX_RETRIES + 1} attempts: ${lastError}`);
+  return { valid: false, transient: true, error: lastError };
 }
 
 /**

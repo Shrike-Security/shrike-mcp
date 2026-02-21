@@ -386,6 +386,14 @@ async function authenticate(): Promise<void> {
     console.error('Validating API key...');
     const authResult = await validateApiKey(apiKey);
     if (!authResult.valid) {
+      if (authResult.transient) {
+        // Backend temporarily unavailable (503 during deploy, network error)
+        // Continue in degraded mode instead of crashing
+        console.error(`Warning: Backend temporarily unavailable (${authResult.error}). Running in degraded mode — scans will retry at request time.`);
+        currentCustomerId = 'anonymous';
+        return;
+      }
+      // Permanent auth failure (401, 403) — exit
       console.error('Invalid API key:', authResult.error);
       process.exit(1);
     }
