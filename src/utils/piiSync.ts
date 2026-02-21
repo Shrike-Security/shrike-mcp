@@ -103,7 +103,12 @@ export async function syncPIIPatterns(): Promise<void> {
 
       try {
         // Go regex → JS RegExp (global + case-insensitive)
-        const regex = new RegExp(p.pattern, 'gi');
+        // Strip Go-specific (?i) inline flag — JS uses 'gi' constructor arg instead
+        let regexStr = p.pattern;
+        if (regexStr.startsWith('(?i)')) {
+          regexStr = regexStr.slice(4);
+        }
+        const regex = new RegExp(regexStr, 'gi');
         converted.push({
           name: threatTypeToName(p.threat_type),
           regex,
