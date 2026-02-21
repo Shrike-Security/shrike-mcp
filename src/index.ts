@@ -3,6 +3,11 @@
  * Shrike MCP Server
  * AI Agent security scanning via Model Context Protocol
  * Supports stdio (default) and HTTP (Streamable HTTP) transports
+ *
+ * Tool Selection Modes:
+ *   Mode A (Selective): SHRIKE_TOOLS=scan_prompt,scan_sql_query (env) or X-Shrike-Tools header (HTTP)
+ *   Mode B (All):       Default — all 7 tools register. Backwards compatible.
+ *   Mode C (Bundled):   SHRIKE_MODE=bundled — single shrike_scan tool. Minimum context footprint.
  */
 
 import { readFileSync } from 'fs';
@@ -23,7 +28,7 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { config, logConfig } from './config.js';
+import { config, logConfig, requestContext, VALID_TOOL_NAMES, type RequestContext } from './config.js';
 import { validateApiKey, extractApiKey } from './auth.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { scanPrompt, scanPromptTool } from './tools/scan.js';
@@ -58,11 +63,17 @@ Usage:
 Environment Variables:
   SHRIKE_API_KEY               API key for authenticated scans (enables LLM layers)
   SHRIKE_BACKEND_URL           Backend API URL (default: https://api.shrikesecurity.com/agent)
+  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 7)
+  SHRIKE_MODE                  Tool mode: bundled (single shrike_scan tool) or omit for normal
   MCP_TRANSPORT                Transport mode: stdio (default) or http
   MCP_PORT                     HTTP server port (default: 8000, used in http mode)
   MCP_SCAN_TIMEOUT_MS          Scan timeout in ms (default: 15000)
   MCP_RATE_LIMIT_PER_MINUTE    Rate limit per customer (default: 100)
   MCP_DEBUG                    Enable debug logging (default: false)
+
+HTTP Headers (when MCP_TRANSPORT=http):
+  Authorization                Bearer <API_KEY> — per-request auth (overrides SHRIKE_API_KEY)
+  X-Shrike-Tools               Comma-separated tool names (overrides SHRIKE_TOOLS)
 
 HTTP Endpoints (when MCP_TRANSPORT=http):
   POST /mcp                    MCP Streamable HTTP endpoint (stateless)
@@ -76,13 +87,168 @@ Docs: https://github.com/Shrike-Security/shrike-mcp`);
   process.exit(0);
 }
 
-// Track connected customer for rate limiting
+// Track connected customer for rate limiting (stdio mode)
 let currentCustomerId: string | null = null;
 
+// =============================================================================
+// TOOL REGISTRY
+// =============================================================================
+
+/** Maps tool name to its definition and handler. compact=true for JSON.stringify without indentation. */
+const TOOL_REGISTRY: Record<string, {
+  definition: object;
+  handler: (args: any, customerId: string) => Promise<any>;
+  compact?: boolean;
+}> = {
+  scan_prompt: {
+    definition: scanPromptTool,
+    handler: (a, c) => scanPrompt(a, c),
+    compact: true,
+  },
+  scan_response: {
+    definition: scanResponseTool,
+    handler: (a, c) => scanResponse(a, c),
+    compact: true,
+  },
+  scan_sql_query: {
+    definition: scanSQLQueryTool,
+    handler: (a, c) => scanSQLQuery(a, c),
+  },
+  scan_file_write: {
+    definition: scanFileWriteTool,
+    handler: (a, c) => scanFileWrite(a, c),
+  },
+  scan_web_search: {
+    definition: scanWebSearchTool,
+    handler: (a, c) => scanWebSearch(a, c),
+  },
+  report_bypass: {
+    definition: reportBypassTool,
+    handler: (a, _c) => reportBypass(a),
+  },
+  get_threat_intel: {
+    definition: getThreatIntelTool,
+    handler: (a, _c) => getThreatIntel(a),
+  },
+};
+
 /**
- * Creates and configures the MCP server
+ * Mode C: Single bundled tool that wraps all scan types.
+ * Minimum context footprint for agents with many MCP servers.
  */
-function createServer(): Server {
+const BUNDLED_TOOL_DEFINITION = {
+  name: 'shrike_scan',
+  description: `Unified security scanner. Set 'type' to choose scan:
+- prompt: Scan prompts for injection, PII, toxicity
+- response: Scan LLM responses for data leaks
+- sql_query: Detect SQL injection in queries
+- file_write: Validate file writes for traversal/secrets
+- web_search: Check search queries for SSRF/PII
+- report_bypass: Report missed threats for community defense
+- threat_intel: Get latest threat patterns`,
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['prompt', 'response', 'sql_query', 'file_write', 'web_search', 'report_bypass', 'threat_intel'],
+        description: 'Scan type to perform',
+      },
+      input: {
+        type: 'object',
+        description: 'Input for the scan. For prompt: {content, context?, redact_pii?}. For sql_query: {query, database?}. For file_write: {path, content, mode?}. For web_search: {query, targetDomains?}. For response: {response, original_prompt?}. For report_bypass: {prompt?, sqlQuery?, ...}. For threat_intel: {category?, limit?}.',
+        additionalProperties: true,
+      },
+    },
+    required: ['type', 'input'],
+  },
+  annotations: {
+    title: 'Shrike Security Scan',
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+};
+
+/** Maps bundled type shorthand to actual tool name */
+const BUNDLED_TYPE_MAP: Record<string, string> = {
+  prompt: 'scan_prompt',
+  response: 'scan_response',
+  sql_query: 'scan_sql_query',
+  file_write: 'scan_file_write',
+  web_search: 'scan_web_search',
+  report_bypass: 'report_bypass',
+  threat_intel: 'get_threat_intel',
+};
+
+/**
+ * Resolves which tools are active based on: per-request header > env var > default.
+ */
+function resolveEnabledTools(headerTools?: string[] | null): string[] {
+  // Per-request header takes priority (HTTP mode)
+  if (headerTools && headerTools.length > 0) {
+    return headerTools.filter(t => (VALID_TOOL_NAMES as readonly string[]).includes(t));
+  }
+  // Bundled mode: no individual tools
+  if (config.mode === 'bundled') {
+    return [];
+  }
+  // Selective mode: env var filter
+  if (config.enabledTools) {
+    return config.enabledTools.filter(t => (VALID_TOOL_NAMES as readonly string[]).includes(t));
+  }
+  // Default: all tools
+  return [...VALID_TOOL_NAMES];
+}
+
+/**
+ * Validates required parameters for a tool call.
+ */
+function validateToolArgs(name: string, args: Record<string, unknown> | undefined): void {
+  switch (name) {
+    case 'scan_prompt':
+      if (!args?.content) throw new McpError(ErrorCode.InvalidParams, 'content is required');
+      break;
+    case 'scan_response':
+      if (!args?.response) throw new McpError(ErrorCode.InvalidParams, 'response is required');
+      break;
+    case 'scan_sql_query':
+      if (!args?.query) throw new McpError(ErrorCode.InvalidParams, 'query is required');
+      break;
+    case 'scan_file_write':
+      if (!args?.path) throw new McpError(ErrorCode.InvalidParams, 'path is required');
+      if (!args?.content) throw new McpError(ErrorCode.InvalidParams, 'content is required');
+      break;
+    case 'scan_web_search':
+      if (!args?.query) throw new McpError(ErrorCode.InvalidParams, 'query is required');
+      break;
+    case 'report_bypass':
+      if (!args?.prompt && !args?.filePath && !args?.fileContent && !args?.sqlQuery && !args?.searchQuery) {
+        throw new McpError(ErrorCode.InvalidParams, 'At least one of prompt, filePath, fileContent, sqlQuery, or searchQuery is required');
+      }
+      break;
+    // get_threat_intel has no required params
+  }
+}
+
+// =============================================================================
+// SERVER CREATION
+// =============================================================================
+
+interface CreateServerOptions {
+  /** Per-request API key (from Authorization header in HTTP mode) */
+  apiKey?: string | null;
+  /** Per-request customer ID (resolved from auth) */
+  customerId?: string | null;
+  /** Per-request tool filter (from X-Shrike-Tools header) */
+  enabledTools?: string[] | null;
+}
+
+/**
+ * Creates and configures the MCP server with optional per-request overrides.
+ */
+function createServer(options: CreateServerOptions = {}): Server {
   const server = new Server(
     {
       name: 'shrike-mcp',
@@ -97,28 +263,30 @@ function createServer(): Server {
     }
   );
 
-  // Register tool list handler
+  // Register tool list handler — returns filtered tools based on mode + options
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: [
-        scanPromptTool,
-        reportBypassTool,
-        getThreatIntelTool,
-        scanWebSearchTool,
-        scanSQLQueryTool,
-        scanFileWriteTool,
-        scanResponseTool,
-      ],
-    };
+    // Mode C: bundled single tool (unless per-request header overrides with specific tools)
+    if (config.mode === 'bundled' && !options.enabledTools?.length) {
+      return { tools: [BUNDLED_TOOL_DEFINITION] };
+    }
+
+    const enabled = resolveEnabledTools(options.enabledTools);
+    const tools = enabled
+      .map(name => TOOL_REGISTRY[name]?.definition)
+      .filter(Boolean);
+
+    return { tools };
   });
 
-  // Register tool call handler
+  // Register tool call handler — dispatches via registry
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
+    const effectiveCustomerId = options.customerId || currentCustomerId || 'anonymous';
+
     // Rate limit check
-    if (currentCustomerId) {
-      const rateLimitResult = rateLimiter.consume(currentCustomerId);
+    if (effectiveCustomerId) {
+      const rateLimitResult = rateLimiter.consume(effectiveCustomerId);
       if (!rateLimitResult.allowed) {
         throw new McpError(
           ErrorCode.InvalidRequest,
@@ -128,135 +296,46 @@ function createServer(): Server {
     }
 
     try {
-      switch (name) {
-        case 'scan_prompt': {
-          const input = args as { content: string; context?: string; redact_pii?: boolean };
-          if (!input.content) {
-            throw new McpError(ErrorCode.InvalidParams, 'content is required');
-          }
-          const result = await scanPrompt(input, currentCustomerId || 'anonymous');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result),
-              },
-            ],
-          };
+      // Mode C: bundled tool dispatch
+      if (name === 'shrike_scan') {
+        const { type, input } = (args || {}) as { type?: string; input?: Record<string, any> };
+        if (!type || !input) {
+          throw new McpError(ErrorCode.InvalidParams, 'type and input are required');
         }
-
-        case 'report_bypass': {
-          const input = args as {
-            prompt?: string;
-            filePath?: string;
-            fileContent?: string;
-            sqlQuery?: string;
-            searchQuery?: string;
-            mutationType?: string;
-            category?: string;
-            notes?: string;
-          };
-          if (!input.prompt && !input.filePath && !input.fileContent && !input.sqlQuery && !input.searchQuery) {
-            throw new McpError(ErrorCode.InvalidParams, 'At least one of prompt, filePath, fileContent, sqlQuery, or searchQuery is required');
-          }
-          const result = await reportBypass(input);
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
+        const actualToolName = BUNDLED_TYPE_MAP[type];
+        if (!actualToolName || !TOOL_REGISTRY[actualToolName]) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            `Unknown scan type: ${type}. Valid types: ${Object.keys(BUNDLED_TYPE_MAP).join(', ')}`
+          );
         }
-
-        case 'get_threat_intel': {
-          const input = args as { category?: string; limit?: number };
-          const result = await getThreatIntel(input);
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
-        }
-
-        case 'scan_web_search': {
-          const input = args as { query: string; targetDomains?: string[] };
-          if (!input.query) {
-            throw new McpError(ErrorCode.InvalidParams, 'query is required');
-          }
-          const result = await scanWebSearch(input, currentCustomerId || 'anonymous');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result),
-              },
-            ],
-          };
-        }
-
-        case 'scan_sql_query': {
-          const input = args as { query: string; database?: string; allowDestructive?: boolean };
-          if (!input.query) {
-            throw new McpError(ErrorCode.InvalidParams, 'query is required');
-          }
-          const result = await scanSQLQuery(input, currentCustomerId || 'anonymous');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result),
-              },
-            ],
-          };
-        }
-
-        case 'scan_file_write': {
-          const input = args as { path: string; content: string; mode?: 'create' | 'overwrite' | 'append' };
-          if (!input.path) {
-            throw new McpError(ErrorCode.InvalidParams, 'path is required');
-          }
-          if (!input.content) {
-            throw new McpError(ErrorCode.InvalidParams, 'content is required');
-          }
-          const result = await scanFileWrite(input, currentCustomerId || 'anonymous');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result),
-              },
-            ],
-          };
-        }
-
-        case 'scan_response': {
-          const input = args as {
-            response: string;
-            original_prompt?: string;
-            pii_tokens?: Array<{ token: string; original: string; type: string }>;
-          };
-          if (!input.response) {
-            throw new McpError(ErrorCode.InvalidParams, 'response is required');
-          }
-          const result = await scanResponse(input, currentCustomerId || 'anonymous');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result),
-              },
-            ],
-          };
-        }
-
-        default:
-          throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+        validateToolArgs(actualToolName, input);
+        const entry = TOOL_REGISTRY[actualToolName];
+        const result = await entry.handler(input, effectiveCustomerId);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, entry.compact ? undefined : 2) }],
+        };
       }
+
+      // Mode A/B: individual tool dispatch
+      const enabled = resolveEnabledTools(options.enabledTools);
+      if (!enabled.includes(name)) {
+        throw new McpError(
+          ErrorCode.MethodNotFound,
+          `Tool '${name}' is not enabled. Enabled tools: ${enabled.join(', ')}`
+        );
+      }
+
+      const entry = TOOL_REGISTRY[name];
+      if (!entry) {
+        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+      }
+
+      validateToolArgs(name, args as Record<string, unknown> | undefined);
+      const result = await entry.handler(args, effectiveCustomerId);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, entry.compact ? undefined : 2) }],
+      };
     } catch (error) {
       if (error instanceof McpError) {
         throw error;
@@ -354,10 +433,25 @@ function createServer(): Server {
   return server;
 }
 
+// =============================================================================
+// AGENT CARD
+// =============================================================================
+
 /**
- * Returns the agent card JSON for AgentCore / .well-known discovery
+ * Returns the agent card JSON for AgentCore / .well-known discovery.
+ * Reflects the active tool set based on current configuration mode.
  */
 function getAgentCard(): object {
+  const enabled = resolveEnabledTools(null);
+  const toolList = config.mode === 'bundled'
+    ? [{ name: 'shrike_scan', description: 'Unified security scanner (bundled mode)' }]
+    : enabled.map(name => {
+        const entry = TOOL_REGISTRY[name];
+        if (!entry) return null;
+        const desc = (entry.definition as any).description;
+        return { name, description: typeof desc === 'string' ? desc.split('\n')[0] : '' };
+      }).filter(Boolean);
+
   return {
     name: 'shrike-mcp',
     version: VERSION,
@@ -365,20 +459,17 @@ function getAgentCard(): object {
     url: `http://localhost:${config.port}/mcp`,
     transport: { type: 'streamable-http' },
     capabilities: { tools: true },
-    tools: [
-      { name: 'scan_prompt', description: 'Scan user prompts for injection attacks and adversarial inputs' },
-      { name: 'scan_response', description: 'Scan LLM responses for data leaks and manipulation' },
-      { name: 'scan_sql_query', description: 'Detect SQL injection in AI-generated queries' },
-      { name: 'scan_file_write', description: 'Validate file write operations for path traversal and malicious content' },
-      { name: 'scan_web_search', description: 'Check search queries for SSRF and domain abuse' },
-      { name: 'report_bypass', description: 'Report novel attack patterns for community defense' },
-      { name: 'get_threat_intel', description: 'Retrieve latest threat patterns and detection signatures' },
-    ],
+    tools: toolList,
   };
 }
 
+// =============================================================================
+// AUTHENTICATION
+// =============================================================================
+
 /**
- * Authenticates the server using SHRIKE_API_KEY from environment
+ * Authenticates the server using SHRIKE_API_KEY from environment (stdio startup).
+ * In HTTP mode, per-request auth from Authorization header is also supported.
  */
 async function authenticate(): Promise<void> {
   const apiKey = process.env.SHRIKE_API_KEY;
@@ -401,23 +492,40 @@ async function authenticate(): Promise<void> {
     console.error(`Authenticated as customer: ${currentCustomerId} (${authResult.tier})`);
   } else {
     console.error('No SHRIKE_API_KEY set, running without authentication');
+    if (config.transport === 'http') {
+      console.error('  HTTP mode: clients can authenticate via Authorization header per-request');
+    }
     currentCustomerId = 'anonymous';
   }
 }
+
+// =============================================================================
+// TRANSPORTS
+// =============================================================================
 
 /**
  * Start in stdio mode (default — for npx, Claude Desktop, Cursor, etc.)
  */
 async function startStdio(): Promise<void> {
-  const server = createServer();
+  const server = createServer({
+    apiKey: config.apiKey,
+    customerId: currentCustomerId,
+    enabledTools: config.enabledTools,
+  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Shrike MCP Server running on stdio transport');
+
+  const toolCount = config.mode === 'bundled'
+    ? '1 (bundled)'
+    : (config.enabledTools ? `${resolveEnabledTools(config.enabledTools).length} (selective)` : '7');
+  console.error(`Shrike MCP Server running on stdio transport (${toolCount} tools)`);
 }
 
 /**
- * Start in HTTP mode (for AWS AgentCore, GCP Cloud Run, Docker containers)
+ * Start in HTTP mode (for Copilot, AWS AgentCore, GCP Cloud Run, Docker containers)
  * Stateless: creates a new Server + Transport per request (SDK recommended pattern)
+ * Per-request auth: extracts Authorization header for each Copilot client
+ * Per-request tools: extracts X-Shrike-Tools header for selective tool registration
  */
 async function startHttp(): Promise<void> {
   const httpServer = createHttpServer(async (req, res) => {
@@ -432,6 +540,7 @@ async function startHttp(): Promise<void> {
         version: VERSION,
         service: 'shrike-mcp',
         transport: 'http',
+        mode: config.mode,
         customer: currentCustomerId,
         timestamp: new Date().toISOString(),
       }));
@@ -448,28 +557,75 @@ async function startHttp(): Promise<void> {
     // MCP endpoint — Streamable HTTP transport
     if (url === '/mcp') {
       if (method === 'POST') {
-        const server = createServer();
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined, // Stateless — required for AgentCore
-        });
-        try {
-          await server.connect(transport);
-          await transport.handleRequest(req, res);
-          res.on('close', () => {
-            transport.close();
-            server.close();
-          });
-        } catch (error) {
-          console.error(`Error handling MCP request: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          if (!res.headersSent) {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
+        // --- Per-request auth (US-035: Copilot sends Authorization: Bearer <key>) ---
+        const authHeader = req.headers['authorization'] as string | undefined;
+        const perRequestKey = extractApiKey(authHeader);
+
+        // --- Per-request tool selection (US-034: X-Shrike-Tools header) ---
+        const toolsHeader = req.headers['x-shrike-tools'] as string | undefined;
+        const perRequestTools = toolsHeader
+          ? toolsHeader.split(',').map(t => t.trim()).filter(Boolean)
+          : null;
+
+        // Resolve customer ID for the per-request key
+        let perRequestCustomerId: string | null = null;
+        if (perRequestKey) {
+          const authResult = await validateApiKey(perRequestKey);
+          if (authResult.valid) {
+            perRequestCustomerId = authResult.customerId || 'default';
+            if (config.debug) {
+              console.error(`[http] Per-request auth: customer=${perRequestCustomerId} tier=${authResult.tier}`);
+            }
+          } else if (!authResult.transient) {
+            // Permanent auth failure — reject immediately
+            res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               jsonrpc: '2.0',
-              error: { code: -32603, message: 'Internal server error' },
+              error: { code: -32001, message: `Authentication failed: ${authResult.error}` },
               id: null,
             }));
+            return;
           }
+          // Transient failure: fall through to process-level key
         }
+
+        // Build per-request context for AsyncLocalStorage
+        const reqCtx: RequestContext = {
+          apiKey: perRequestKey || config.apiKey,
+          customerId: perRequestCustomerId || currentCustomerId,
+          enabledTools: perRequestTools,
+        };
+
+        // Run MCP handling within AsyncLocalStorage context
+        // so getAuthHeaders() in tool handlers picks up per-request key
+        await requestContext.run(reqCtx, async () => {
+          const server = createServer({
+            apiKey: reqCtx.apiKey,
+            customerId: reqCtx.customerId,
+            enabledTools: reqCtx.enabledTools,
+          });
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: undefined, // Stateless — required for AgentCore
+          });
+          try {
+            await server.connect(transport);
+            await transport.handleRequest(req, res);
+            res.on('close', () => {
+              transport.close();
+              server.close();
+            });
+          } catch (error) {
+            console.error(`Error handling MCP request: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                jsonrpc: '2.0',
+                error: { code: -32603, message: 'Internal server error' },
+                id: null,
+              }));
+            }
+          }
+        });
         return;
       }
 
@@ -493,8 +649,14 @@ async function startHttp(): Promise<void> {
     console.error(`  MCP endpoint: http://0.0.0.0:${config.port}/mcp`);
     console.error(`  Health check: http://0.0.0.0:${config.port}/health`);
     console.error(`  Agent card:   http://0.0.0.0:${config.port}/.well-known/agent-card.json`);
+    console.error(`  Per-request auth: Authorization: Bearer <key>`);
+    console.error(`  Per-request tools: X-Shrike-Tools: scan_prompt,scan_sql_query`);
   });
 }
+
+// =============================================================================
+// MAIN
+// =============================================================================
 
 /**
  * Main entry point
@@ -503,13 +665,31 @@ async function main(): Promise<void> {
   console.error('Shrike MCP Server starting...');
   logConfig();
 
+  // Validate SHRIKE_TOOLS if provided
+  if (config.enabledTools) {
+    const invalid = config.enabledTools.filter(t => !(VALID_TOOL_NAMES as readonly string[]).includes(t));
+    if (invalid.length > 0) {
+      console.error(`Warning: Unknown tool names in SHRIKE_TOOLS: ${invalid.join(', ')}`);
+      console.error(`Valid tools: ${VALID_TOOL_NAMES.join(', ')}`);
+    }
+    const valid = config.enabledTools.filter(t => (VALID_TOOL_NAMES as readonly string[]).includes(t));
+    if (valid.length === 0) {
+      console.error('Error: SHRIKE_TOOLS contains no valid tool names');
+      process.exit(1);
+    }
+    console.error(`Selective mode: ${valid.length} tools enabled: ${valid.join(', ')}`);
+  }
+  if (config.mode === 'bundled') {
+    console.error('Bundled mode: single "shrike_scan" tool registered');
+  }
+
   await authenticate();
   await syncPIIPatterns();
 
   // Heartbeat logging (for monitoring)
   const heartbeatInterval = setInterval(() => {
     if (config.debug) {
-      console.error(`[heartbeat] active, customer=${currentCustomerId}, transport=${config.transport}`);
+      console.error(`[heartbeat] active, customer=${currentCustomerId}, transport=${config.transport}, mode=${config.mode}`);
     }
   }, config.heartbeatIntervalMs);
 

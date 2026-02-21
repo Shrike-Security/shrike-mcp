@@ -3,6 +3,22 @@
  * Loads settings from environment variables with sensible defaults
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+/**
+ * Per-request context for HTTP transport.
+ * Allows each Copilot/HTTP request to carry its own API key and tool filter
+ * without modifying individual tool handler files.
+ */
+export interface RequestContext {
+  apiKey: string | null;
+  customerId: string | null;
+  enabledTools: string[] | null;
+}
+
+/** AsyncLocalStorage for per-request context (HTTP mode). */
+export const requestContext = new AsyncLocalStorage<RequestContext>();
+
 export interface Config {
   /** Transport mode: 'stdio' (default) or 'http' */
   transport: 'stdio' | 'http';
@@ -20,6 +36,10 @@ export interface Config {
   heartbeatIntervalMs: number;
   /** Enable debug logging */
   debug: boolean;
+  /** Tool registration mode: 'all' (default), 'selective', or 'bundled' */
+  mode: 'all' | 'selective' | 'bundled';
+  /** Enabled tools (used when mode is 'selective'). Null means all. */
+  enabledTools: string[] | null;
 }
 
 function getEnvOrDefault(key: string, defaultValue: string): string {
@@ -48,6 +68,17 @@ export const config: Config = {
   rateLimitPerMinute: getEnvNumber('MCP_RATE_LIMIT_PER_MINUTE', 100),
   heartbeatIntervalMs: getEnvNumber('MCP_HEARTBEAT_INTERVAL_MS', 30000),
   debug: getEnvOrDefault('MCP_DEBUG', 'false') === 'true',
+  // Tool selection: SHRIKE_MODE=bundled → single shrike_scan tool
+  //                 SHRIKE_TOOLS=scan_prompt,scan_sql_query → selective mode
+  //                 Neither set → all 7 tools (backwards compatible)
+  mode: (() => {
+    if (process.env.SHRIKE_MODE?.toLowerCase() === 'bundled') return 'bundled' as const;
+    if (process.env.SHRIKE_TOOLS) return 'selective' as const;
+    return 'all' as const;
+  })(),
+  enabledTools: process.env.SHRIKE_TOOLS
+    ? process.env.SHRIKE_TOOLS.split(',').map(t => t.trim()).filter(Boolean)
+    : null,
 };
 
 export function logConfig(): void {
@@ -59,19 +90,33 @@ export function logConfig(): void {
   console.error(`  API Key: ${config.apiKey ? '***' + config.apiKey.slice(-4) + ' (authenticated - L1-L8 full scan)' : 'NOT SET (free tier - L1-L4 regex only)'}`);
   console.error(`  Scan Timeout: ${config.scanTimeoutMs}ms`);
   console.error(`  Rate Limit: ${config.rateLimitPerMinute} req/min`);
-  console.error(`  Heartbeat Interval: ${config.heartbeatIntervalMs}ms`);
+  console.error(`  Mode: ${config.mode}`);
+  console.error(`  Enabled Tools: ${config.enabledTools ? config.enabledTools.join(', ') : 'all'}`);
   console.error(`  Debug: ${config.debug}`);
 }
 
 /**
- * Returns authorization headers if API key is configured
+ * Returns authorization headers for backend requests.
+ * In HTTP mode, per-request key from AsyncLocalStorage takes priority
+ * over the process-level SHRIKE_API_KEY. This lets each Copilot user
+ * send their own API key without modifying tool handler files.
  */
 export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (config.apiKey) {
-    headers['Authorization'] = `Bearer ${config.apiKey}`;
+  const ctx = requestContext.getStore();
+  const key = ctx?.apiKey ?? config.apiKey;
+  if (key) {
+    headers['Authorization'] = `Bearer ${key}`;
   }
   return headers;
 }
+
+/** All valid tool names that can be used with SHRIKE_TOOLS */
+export const VALID_TOOL_NAMES = [
+  'scan_prompt', 'scan_response', 'scan_sql_query',
+  'scan_file_write', 'scan_web_search', 'report_bypass', 'get_threat_intel',
+] as const;
+
+export type ValidToolName = typeof VALID_TOOL_NAMES[number];
