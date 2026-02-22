@@ -39,6 +39,8 @@ import { scanSQLQuery, scanSQLQueryTool } from './tools/sqlQuery.js';
 import { scanFileWrite, scanFileWriteTool } from './tools/fileWrite.js';
 import { scanResponse, scanResponseTool } from './tools/scanResponse.js';
 import { syncPIIPatterns } from './utils/piiSync.js';
+import { createKeyProvider } from './keyProvider.js';
+import { KeyRotationManager } from './keyRotation.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -89,6 +91,12 @@ Docs: https://github.com/Shrike-Security/shrike-mcp`);
 
 // Track connected customer for rate limiting (stdio mode)
 let currentCustomerId: string | null = null;
+
+// Key rotation manager — initialized in authenticate()
+let keyRotationManager: KeyRotationManager | null = null;
+
+/** Exported for 401 retry in scan tools */
+export { keyRotationManager };
 
 // =============================================================================
 // TOOL REGISTRY
@@ -468,13 +476,36 @@ function getAgentCard(): object {
 // =============================================================================
 
 /**
- * Authenticates the server using SHRIKE_API_KEY from environment (stdio startup).
+ * Authenticates the server using the configured KeyProvider.
+ * Backwards compatible: default provider ('env') reads SHRIKE_API_KEY from environment.
  * In HTTP mode, per-request auth from Authorization header is also supported.
  */
 async function authenticate(): Promise<void> {
-  const apiKey = process.env.SHRIKE_API_KEY;
+  const provider = createKeyProvider();
+  keyRotationManager = new KeyRotationManager(provider, {
+    pollIntervalMs: config.keyPollIntervalMs,
+    onKeyChanged: async (newKey: string) => {
+      config.apiKey = newKey;
+      try {
+        const result = await validateApiKey(newKey);
+        if (result.valid) {
+          currentCustomerId = result.customerId || 'default';
+          console.error(`[KeyRotation] Re-authenticated: ${currentCustomerId} (${result.tier})`);
+        } else {
+          console.error(`[KeyRotation] New key is invalid: ${result.error}`);
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[KeyRotation] Re-validation failed: ${message}`);
+      }
+    },
+  });
+
+  const apiKey = await keyRotationManager.initialize();
+  config.apiKey = apiKey;
+
   if (apiKey) {
-    console.error('Validating API key...');
+    console.error(`Validating API key from ${provider.name()} provider...`);
     const authResult = await validateApiKey(apiKey);
     if (!authResult.valid) {
       if (authResult.transient) {
@@ -491,7 +522,7 @@ async function authenticate(): Promise<void> {
     currentCustomerId = authResult.customerId || 'default';
     console.error(`Authenticated as customer: ${currentCustomerId} (${authResult.tier})`);
   } else {
-    console.error('No SHRIKE_API_KEY set, running without authentication');
+    console.error(`No API key available (provider: ${provider.name()}), running without authentication`);
     if (config.transport === 'http') {
       console.error('  HTTP mode: clients can authenticate via Authorization header per-request');
     }
@@ -696,12 +727,14 @@ async function main(): Promise<void> {
   // Handle shutdown
   process.on('SIGINT', () => {
     clearInterval(heartbeatInterval);
+    keyRotationManager?.stop();
     console.error('Shutting down...');
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     clearInterval(heartbeatInterval);
+    keyRotationManager?.stop();
     console.error('Shutting down...');
     process.exit(0);
   });

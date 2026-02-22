@@ -53,6 +53,18 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "peerDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@google-cloud/secret-manager": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-secrets-manager": {
+      "optional": true
+    },
+    "@google-cloud/secret-manager": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "express": "^5.2.1"

@@ -26,8 +26,14 @@ export interface Config {
   port: number;
   /** Backend API URL for scan requests */
   backendUrl: string;
-  /** Shrike API key for authenticated (paid tier) scans */
+  /** Shrike API key for authenticated (paid tier) scans. Set dynamically by KeyRotationManager. */
   apiKey: string | null;
+  /** Key provider: 'env' (default), 'file', 'vault', 'aws', 'gcp' */
+  keyProvider: string;
+  /** Key rotation poll interval in ms. Default 300000 (5 min). 0 = disabled. */
+  keyPollIntervalMs: number;
+  /** File path for 'file' key provider (K8s Secrets volume mount) */
+  keyFile: string;
   /** Timeout for scan requests in milliseconds */
   scanTimeoutMs: number;
   /** Rate limit: requests per minute per API key */
@@ -58,10 +64,16 @@ export const config: Config = {
   port: getEnvNumber('MCP_PORT', 8000),
   // Default uses load balancer for scalability. Override with SHRIKE_BACKEND_URL for VPC deployments.
   backendUrl: getEnvOrDefault('SHRIKE_BACKEND_URL', 'https://api.shrikesecurity.com/agent'),
-  // API key for authenticated scans (enables LLM layer L7-L8)
+  // API key — set dynamically by KeyRotationManager at startup.
+  // For backwards compatibility, falls back to SHRIKE_API_KEY env var when keyProvider is 'env' (default).
   // Without API key, scans are free tier (L1-L4 regex only)
   // Get your API key at: https://console.shrikesecurity.com/api-keys
-  apiKey: process.env.SHRIKE_API_KEY || null,
+  apiKey: null as string | null,
+  // Key provider: env (default), file, vault, aws, gcp
+  // See docs for configuration per provider
+  keyProvider: getEnvOrDefault('SHRIKE_KEY_PROVIDER', 'env'),
+  keyPollIntervalMs: getEnvNumber('SHRIKE_KEY_POLL_INTERVAL_MS', 300000),
+  keyFile: getEnvOrDefault('SHRIKE_KEY_FILE', '/var/run/secrets/shrike/api-key'),
   // SECURITY: 15000ms allows for full 8-layer scan pipeline with LLM analysis
   // Backend takes ~10s for comprehensive scans including vector embeddings + LLM
   scanTimeoutMs: getEnvNumber('MCP_SCAN_TIMEOUT_MS', 15000),
@@ -87,7 +99,9 @@ export function logConfig(): void {
   console.error(`  Transport: ${config.transport}`);
   console.error(`  Port: ${config.port} ${config.transport === 'stdio' ? '(unused in stdio mode)' : ''}`);
   console.error(`  Backend URL: ${config.backendUrl}`);
+  console.error(`  Key Provider: ${config.keyProvider}`);
   console.error(`  API Key: ${config.apiKey ? '***' + config.apiKey.slice(-4) + ' (authenticated - L1-L8 full scan)' : 'NOT SET (free tier - L1-L4 regex only)'}`);
+  console.error(`  Key Poll Interval: ${config.keyPollIntervalMs}ms${config.keyPollIntervalMs === 0 ? ' (disabled)' : ''}`);
   console.error(`  Scan Timeout: ${config.scanTimeoutMs}ms`);
   console.error(`  Rate Limit: ${config.rateLimitPerMinute} req/min`);
   console.error(`  Mode: ${config.mode}`);

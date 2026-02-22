@@ -5,6 +5,7 @@
  */
 
 import { config, getAuthHeaders } from '../config.js';
+import { keyRotationManager } from '../index.js';
 import {
   generateRequestId,
   sanitizeScanResult,
@@ -74,6 +75,29 @@ async function fetchWithRetry(
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
+
+      // On 401, try refreshing the key and retry once
+      if (response.status === 401 && keyRotationManager && attempt === 0) {
+        console.error('[scan] Got 401, attempting key refresh...');
+        const refreshedKey = await keyRotationManager.refresh();
+        if (refreshedKey && refreshedKey !== (options.headers as Record<string, string>)?.['Authorization']?.replace('Bearer ', '')) {
+          const retryController = new AbortController();
+          const retryTimeout = setTimeout(() => retryController.abort(), timeoutMs);
+          try {
+            const retryResponse = await fetch(url, {
+              ...options,
+              headers: { ...options.headers, ...getAuthHeaders() },
+              signal: retryController.signal,
+            });
+            clearTimeout(retryTimeout);
+            return retryResponse;
+          } catch {
+            clearTimeout(retryTimeout);
+            // Fall through to return original 401 response
+          }
+        }
+      }
+
       return response;
     } catch (error) {
       clearTimeout(timeoutId);
