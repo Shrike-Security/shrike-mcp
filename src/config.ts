@@ -100,7 +100,7 @@ export function logConfig(): void {
   console.error(`  Port: ${config.port} ${config.transport === 'stdio' ? '(unused in stdio mode)' : ''}`);
   console.error(`  Backend URL: ${config.backendUrl}`);
   console.error(`  Key Provider: ${config.keyProvider}`);
-  console.error(`  API Key: ${config.apiKey ? '***' + config.apiKey.slice(-4) + ' (authenticated - L1-L8 full scan)' : 'NOT SET (free tier - L1-L4 regex only)'}`);
+  console.error(`  API Key: ${config.apiKey ? '***' + config.apiKey.slice(-4) + ' (authenticated - full pipeline)' : 'NOT SET (free tier - full pipeline)'}`);
   console.error(`  Key Poll Interval: ${config.keyPollIntervalMs}ms${config.keyPollIntervalMs === 0 ? ' (disabled)' : ''}`);
   console.error(`  Scan Timeout: ${config.scanTimeoutMs}ms`);
   console.error(`  Rate Limit: ${config.rateLimitPerMinute} req/min`);

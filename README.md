@@ -4,7 +4,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
 
-**7 security tools for AI agents. 9-layer detection pipeline. One MCP server.**
+**7 security tools for AI agents. Multi-stage detection pipeline. One MCP server.**
 
 Shrike MCP gives AI agents real-time security scanning for prompts, responses, SQL queries, file writes, and web searches — catching prompt injection, jailbreaks, PII leaks, and data exfiltration before they reach your users or systems.
 
@@ -28,7 +28,7 @@ Shrike MCP gives AI agents real-time security scanning for prompts, responses, S
 }
 ```
 
-**3. Your agent now has 7 security tools.** Every prompt, response, and tool call is scanned through the full 9-layer detection pipeline.
+**3. Your agent now has 7 security tools.** Every prompt, response, and tool call is scanned through the full detection pipeline.
 
 ## Seven Tools
 
@@ -60,31 +60,27 @@ Inbound scans catch injection attacks. Outbound scans catch data leaks. Tool-spe
 
 ## Detection Pipeline
 
-Every scan runs through 9 layers, from fast regex to deep LLM analysis:
+Every scan runs through a multi-stage cascade — from sub-millisecond pattern matching to deep semantic analysis — so zero-day attacks that evade simple regex are still caught by the LLM layer.
 
-| Layer | Name | What It Catches |
-|-------|------|-----------------|
-| L1 | Regex Pattern Matching | Known injection patterns across 14 languages (~130 patterns) |
-| L1.4 | Unicode Normalization | Homoglyph attacks, RTL override, mixed-script tricks |
-| L1.42 | Malformed Input Detection | Null bytes, control characters, oversized payloads |
-| L1.45a | Encoding Detection | Base64, hex, URL-encoded payloads hiding injection |
-| L1.45 | Token Analysis | Suspicious token sequences, structural anomalies |
-| L1.455 | Semantic Similarity | Near-match detection against known attack patterns |
-| L6 | Visual Text Analysis | Visual spoofing, RTL rendering tricks |
-| L7 | LLM Semantic Analysis | Zero-day attacks, context-aware jailbreak detection (Gemini 2.0 Flash) |
-| L8 | Response Intelligence | System prompt leaks, PII in output, topic drift |
+| Stage | Purpose |
+|-------|---------|
+| Pattern Matching | Known attack signatures across 14+ languages |
+| Input Normalization | Unicode tricks, encoding evasion, malformed payloads |
+| Structural Analysis | Token sequences, semantic similarity to known attacks |
+| LLM Semantic Analysis | Zero-day detection, context-aware jailbreak analysis |
+| Response Intelligence | Output scanning for leaks, PII, and policy violations |
 
-All layers run on every tier — community users get the same detection quality as enterprise.
+All stages run on every tier — community users get the same detection quality as enterprise.
 
 ## Community Tier (Free)
 
 | Feature | Included |
 |---------|----------|
-| Detection Pipeline | Full 9-layer (L1–L8) |
+| Detection Pipeline | Full multi-stage pipeline |
 | MCP Tools | All 7 |
 | Scan Volume | 1,000 scans/month |
 | Rate Limit | 10 scans/minute |
-| Multilingual | 14 explicit languages + 100+ via LLM |
+| Multilingual | 100+ languages |
 | Compliance Catalogues | GDPR, HIPAA, ISO 27001, SOC 2, WebMCP |
 | Dashboard | Activity feed, scan results, analytics, API key management |
 | Credit Card | Not required |

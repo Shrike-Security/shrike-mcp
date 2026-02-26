@@ -7,13 +7,13 @@
     "url": "https://github.com/Shrike-Security/shrike-mcp",
     "source": "github"
   },
-  "version": "2.0.0",
+  "version": "2.1.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "shrike-mcp",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
