@@ -4,6 +4,12 @@ All notable changes to shrike-mcp will be documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] - 2026-02-26
+
+### Changed
+- `get_threat_intel` upgraded: returns server version, stats (detections, cost savings, learning queue), coverage across 10 attack categories, and `include` param for summary vs full detail
+- Categories expanded from 4 to 10 (added multilingual, semantic_rewrite, negation_attack, command_injection, healthcare_harm, financial_crime)
+
 ## [2.1.0] - 2026-02-26
 
 ### Added
