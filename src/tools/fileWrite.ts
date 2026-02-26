@@ -48,6 +48,14 @@ export interface FileWriteResult {
     contentLength: number;
     fileExtension: string;
   };
+  approvalInfo?: {
+    requires_approval: boolean;
+    approval_id: string;
+    approval_level: string;
+    action_summary: string;
+    policy_name: string;
+    expires_in_seconds: number;
+  };
 }
 
 /**
@@ -61,6 +69,14 @@ interface BackendSpecializedResponse {
   confidence: number;
   content_type: string;
   scan_time_ms: number;
+  approval_info?: {
+    requires_approval: boolean;
+    approval_id: string;
+    approval_level: string;
+    action_summary: string;
+    policy_name: string;
+    expires_in_seconds: number;
+  };
 }
 
 /**
@@ -170,7 +186,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     } else {
       console.error(`[file] ${requestId} safe=false action=block reason=size_limit time=${Date.now() - startTime}ms`);
     }
-    return sanitizeFileWriteResult(internalResult, requestId);
+    return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
   }
 
   const controller = new AbortController();
@@ -202,7 +218,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       } else {
         console.error(`[file] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return sanitizeFileWriteResult(internalResult, requestId);
+      return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
     }
 
     const pathData = await pathResponse.json() as BackendSpecializedResponse;
@@ -243,7 +259,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       } else {
         console.error(`[file] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return sanitizeFileWriteResult(internalResult, requestId);
+      return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
     }
 
     const contentData = await contentResponse.json() as BackendSpecializedResponse;
@@ -286,6 +302,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
         contentLength,
         fileExtension,
       },
+      approvalInfo: contentData.approval_info || pathData.approval_info,
     };
 
     // Log scan result
@@ -296,7 +313,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     }
 
     // Return sanitized response (protects IP)
-    return sanitizeFileWriteResult(internalResult, requestId);
+    return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
 
   } catch (error) {
     clearTimeout(timeoutId);
@@ -315,7 +332,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     } else {
       console.error(`[file] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
     }
-    return sanitizeFileWriteResult(internalResult, requestId);
+    return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
   }
 }
 
@@ -340,7 +357,11 @@ function compareSeverity(a: string | undefined, b: string | undefined): number {
  */
 export const scanFileWriteTool = {
   name: 'scan_file_write',
-  description: `Scans a file write operation before execution for security threats.
+  description: `Call this BEFORE writing any file to disk, storage, or output. Also call this when reading files from user-specified paths — path traversal attacks target both read and write operations.
+
+DECISION LOGIC:
+- If blocked=true: do NOT write the file. Return the user_message to the caller.
+- If blocked=false: the file operation is safe to proceed.
 
 Checks:
 - Sensitive file paths (.env, credentials, SSH keys, certificates)
@@ -349,13 +370,9 @@ Checks:
 - Secrets in content (API keys, passwords, tokens)
 - Malicious code patterns (reverse shells, fork bombs)
 
-Returns:
-- blocked: true/false
-- threat_type: path_traversal, secrets_exposure, etc.
-- severity: critical/high/medium/low
-- confidence: high/medium/low
-- guidance: actionable explanation
-- request_id: unique identifier`,
+Enterprise context: Prevents agents from accidentally writing credentials to logs, committing secrets to repositories, or overwriting system files.
+
+ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOCKING the file operation. Do NOT write unscanned content.`,
   inputSchema: {
     type: 'object' as const,
     properties: {

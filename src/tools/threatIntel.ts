@@ -160,7 +160,21 @@ export async function getThreatIntel(input: ThreatIntelInput): Promise<ThreatInt
  */
 export const getThreatIntelTool = {
   name: 'get_threat_intel',
-  description: 'Retrieves threat intelligence: detection coverage across 10 attack categories, active pattern stats, learning system status, and cost savings. Use include="full" for individual pattern details.',
+  description: `Retrieves current threat intelligence: detection coverage, active pattern stats, learning system status, and cost savings.
+
+WHEN TO USE:
+- Audit logging: record which patterns were active during a scan session
+- Compliance reporting: demonstrate scanner coverage to auditors (SOC 2, GDPR, HIPAA)
+- Dashboard population: display threat statistics in admin interfaces
+- Coverage verification: confirm detection exists for a specific threat category
+
+Use include="full" for individual pattern details. Filter by category for targeted intel.
+
+Threat intelligence updates infrequently (hourly, not per-request). Cache results for the duration of your session or for up to 1 hour. Do NOT call this before every scan — it is an informational tool, not a prerequisite for scanning.
+
+Enterprise context: Provides the evidence trail that enterprise security and compliance teams require.
+
+ERROR HANDLING: If this tool returns an error, use cached results if available. Threat intel unavailability should NOT block scanning operations.`,
   inputSchema: {
     type: 'object' as const,
     properties: {

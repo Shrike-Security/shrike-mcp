@@ -131,6 +131,7 @@ export function getAuthHeaders(): Record<string, string> {
 export const VALID_TOOL_NAMES = [
   'scan_prompt', 'scan_response', 'scan_sql_query',
   'scan_file_write', 'scan_web_search', 'report_bypass', 'get_threat_intel',
+  'check_approval',
 ] as const;
 
 export type ValidToolName = typeof VALID_TOOL_NAMES[number];

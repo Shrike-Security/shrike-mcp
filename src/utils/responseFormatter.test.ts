@@ -129,6 +129,284 @@ describe('responseFormatter', () => {
     });
   });
 
+  // =========================================================================
+  // APPROVAL RESPONSE TESTS (require_approval action)
+  // =========================================================================
+
+  describe('approval responses', () => {
+    const requestId = 'req_approval_test';
+
+    const approvalInfo = {
+      requires_approval: true,
+      approval_id: 'appr-uuid-123',
+      approval_level: 'edge',
+      action_summary: 'DELETE FROM production.users WHERE id = 42',
+      policy_name: 'Production DELETE Policy',
+      expires_in_seconds: 1800,
+    };
+
+    describe('sanitizeScanResult with approvalInfo', () => {
+      it('should return require_approval when safe scan has approvalInfo', () => {
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          violations: [],
+          performance: {
+            totalScanTimeMs: 100,
+            policiesEvaluated: 10,
+            llmAnalysisUsed: false,
+            cacheHits: 0,
+          },
+          approvalInfo,
+        };
+
+        const sanitized = sanitizeScanResult(internalResult, requestId);
+
+        expect(sanitized.blocked).toBe(true);
+        expect(sanitized.action).toBe('require_approval');
+        if (sanitized.action === 'require_approval') {
+          expect(sanitized.approval_id).toBe('appr-uuid-123');
+          expect(sanitized.approval_context.policy_name).toBe('Production DELETE Policy');
+          expect(sanitized.approval_context.approval_level).toBe('edge');
+          expect(sanitized.approval_context.action_summary).toContain('DELETE FROM');
+          expect(sanitized.approval_context.expires_in_seconds).toBe(1800);
+          expect(sanitized.agent_instruction).toContain('HOLD');
+          expect(sanitized.agent_instruction).toContain('Do NOT proceed');
+          expect(sanitized.user_message).toContain('appr-uuid-123');
+          expect(sanitized.user_message).toContain('30 minutes');
+          expect(sanitized.audit.scan_id).toBe(requestId);
+          expect(sanitized.audit.policy_name).toBe('Production DELETE Policy');
+          expect(sanitized.request_id).toBe(requestId);
+        }
+      });
+
+      it('should NOT return approval when safe=false (blocked wins)', () => {
+        const internalResult = {
+          safe: false,
+          threatLevel: 'high',
+          confidence: 0.95,
+          recommendedAction: 'block' as const,
+          violations: [
+            {
+              threatType: 'sql_injection',
+              severity: 'high',
+              confidence: 0.95,
+              action: 'block',
+              detectedBy: 'regex',
+              message: 'Test',
+              policyId: 'pol-1',
+              policyName: 'Test',
+            },
+          ],
+          performance: {
+            totalScanTimeMs: 100,
+            policiesEvaluated: 10,
+            llmAnalysisUsed: false,
+            cacheHits: 0,
+          },
+          approvalInfo, // present but should be ignored because safe=false
+        };
+
+        const sanitized = sanitizeScanResult(internalResult, requestId);
+
+        expect(sanitized.blocked).toBe(true);
+        expect(sanitized.action).toBe('block'); // block, not require_approval
+      });
+
+      it('should return allow when safe with no approvalInfo', () => {
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          violations: [],
+          performance: {
+            totalScanTimeMs: 50,
+            policiesEvaluated: 5,
+            llmAnalysisUsed: false,
+            cacheHits: 0,
+          },
+        };
+
+        const sanitized = sanitizeScanResult(internalResult, requestId);
+
+        expect(sanitized.blocked).toBe(false);
+        expect(sanitized.action).toBe('allow');
+      });
+
+      it('should return allow when approvalInfo.requires_approval is false', () => {
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          violations: [],
+          performance: {
+            totalScanTimeMs: 50,
+            policiesEvaluated: 5,
+            llmAnalysisUsed: false,
+            cacheHits: 0,
+          },
+          approvalInfo: { ...approvalInfo, requires_approval: false },
+        };
+
+        const sanitized = sanitizeScanResult(internalResult, requestId);
+
+        expect(sanitized.blocked).toBe(false);
+        expect(sanitized.action).toBe('allow');
+      });
+    });
+
+    describe('sanitizeSQLResult with approvalInfo', () => {
+      it('should return require_approval for safe SQL with approvalInfo', () => {
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          issues: [],
+          metadata: { scanTimeMs: 30, queryLength: 50, statementType: 'DELETE' },
+          approvalInfo,
+        };
+
+        const sanitized = sanitizeSQLResult(internalResult, requestId);
+
+        expect(sanitized.blocked).toBe(true);
+        expect(sanitized.action).toBe('require_approval');
+        if (sanitized.action === 'require_approval') {
+          expect(sanitized.approval_id).toBe('appr-uuid-123');
+          expect(sanitized.approval_context.expires_in_seconds).toBe(1800);
+        }
+      });
+    });
+
+    describe('sanitizeFileWriteResult with approvalInfo', () => {
+      it('should return require_approval for safe file write with approvalInfo', () => {
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          issues: [],
+          metadata: { scanTimeMs: 20, pathLength: 30, contentLength: 100, fileExtension: 'conf' },
+          approvalInfo,
+        };
+
+        const sanitized = sanitizeFileWriteResult(internalResult, requestId);
+
+        expect(sanitized.blocked).toBe(true);
+        expect(sanitized.action).toBe('require_approval');
+        if (sanitized.action === 'require_approval') {
+          expect(sanitized.approval_id).toBe('appr-uuid-123');
+          expect(sanitized.user_message).toContain('approval');
+        }
+      });
+    });
+
+    describe('sanitizeWebSearchResult with approvalInfo', () => {
+      it('should return require_approval for safe web search with approvalInfo', () => {
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          issues: [],
+          metadata: { scanTimeMs: 15, queryLength: 25, domainsChecked: 0 },
+          approvalInfo,
+        };
+
+        const sanitized = sanitizeWebSearchResult(internalResult, requestId);
+
+        expect(sanitized.blocked).toBe(true);
+        expect(sanitized.action).toBe('require_approval');
+        if (sanitized.action === 'require_approval') {
+          expect(sanitized.approval_id).toBe('appr-uuid-123');
+          expect(sanitized.approval_context.policy_name).toBe('Production DELETE Policy');
+        }
+      });
+    });
+
+    describe('approval response structure', () => {
+      it('should compute expires_in minutes correctly', () => {
+        const shortExpiry = {
+          ...approvalInfo,
+          expires_in_seconds: 90, // 1.5 minutes → ceil to 2
+        };
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          violations: [],
+          performance: {
+            totalScanTimeMs: 50,
+            policiesEvaluated: 5,
+            llmAnalysisUsed: false,
+            cacheHits: 0,
+          },
+          approvalInfo: shortExpiry,
+        };
+
+        const sanitized = sanitizeScanResult(internalResult, requestId);
+
+        if (sanitized.action === 'require_approval') {
+          expect(sanitized.user_message).toContain('2 minutes');
+        }
+      });
+
+      it('should include audit block with policy_name', () => {
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          violations: [],
+          performance: {
+            totalScanTimeMs: 50,
+            policiesEvaluated: 5,
+            llmAnalysisUsed: false,
+            cacheHits: 0,
+          },
+          approvalInfo,
+        };
+
+        const sanitized = sanitizeScanResult(internalResult, requestId);
+
+        expect(sanitized.audit).toBeDefined();
+        expect(sanitized.audit.scan_id).toBe(requestId);
+        expect(sanitized.audit.timestamp).toBeDefined();
+        if (sanitized.action === 'require_approval') {
+          expect(sanitized.audit.policy_name).toBe('Production DELETE Policy');
+        }
+      });
+
+      it('should have blocked=true to halt agents that only check blocked', () => {
+        const internalResult = {
+          safe: true,
+          threatLevel: 'none',
+          confidence: 0,
+          recommendedAction: 'allow' as const,
+          issues: [],
+          metadata: { scanTimeMs: 10, queryLength: 20, statementType: 'DELETE' },
+          approvalInfo,
+        };
+
+        const sanitized = sanitizeSQLResult(internalResult, requestId);
+
+        // This is critical: blocked=true ensures agents halt even if they don't
+        // understand require_approval action
+        expect(sanitized.blocked).toBe(true);
+        expect(sanitized.action).toBe('require_approval');
+      });
+    });
+  });
+
+  // =========================================================================
+  // EXISTING TESTS
+  // =========================================================================
+
   describe('sanitizeScanResult', () => {
     const requestId = 'req_test123';
 

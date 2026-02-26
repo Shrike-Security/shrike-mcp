@@ -161,7 +161,7 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
     } else {
       console.error(`[response] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
     }
-    return sanitizeScanResult(internalResult, requestId);
+    return sanitizeScanResult(internalResult, requestId, 'scan_response');
   }
 
   try {
@@ -206,11 +206,19 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
       } else {
         console.error(`[response] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return sanitizeScanResult(internalResult, requestId);
+      return sanitizeScanResult(internalResult, requestId, 'scan_response');
     }
 
     const data = await response.json() as BackendResponse;
     const internalResult = transformBackendResponse(data, Date.now() - startTime);
+
+    // For response scans, 'flag' means "log for admin review" — NOT block.
+    // Blocking every flagged response is too disruptive (topic drift, tone shifts
+    // are informational, not threats). Only 'block' action should prevent delivery.
+    if (internalResult.recommendedAction === 'flag') {
+      internalResult.safe = true;
+      internalResult.recommendedAction = 'allow';
+    }
 
     if (config.debug) {
       logInternalDetails(extractScanInternalDetails(internalResult, requestId, customerId));
@@ -218,7 +226,7 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
       console.error(`[response] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
     }
 
-    const sanitized = sanitizeScanResult(internalResult, requestId);
+    const sanitized = sanitizeScanResult(internalResult, requestId, 'scan_response');
 
     // Rehydrate PII tokens if provided and response is safe
     if (input.pii_tokens?.length && !sanitized.blocked) {
@@ -257,7 +265,7 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
     } else {
       console.error(`[response] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
     }
-    return sanitizeScanResult(internalResult, requestId);
+    return sanitizeScanResult(internalResult, requestId, 'scan_response');
   }
 }
 
@@ -330,6 +338,7 @@ function transformBackendResponse(data: BackendResponse, scanTimeMs: number): Sc
       timedOut: false,
       scanType: 'response',
     },
+    approvalInfo: data.approval_info,
   };
 }
 
@@ -377,28 +386,24 @@ function createFailClosedResponse(scanTimeMs: number, reason: string): ScanResul
  */
 export const scanResponseTool = {
   name: 'scan_response',
-  description: `Scans an LLM-generated response before showing it to the user.
+  description: `Call this AFTER the LLM generates a response, BEFORE returning it to the user or downstream system.
 
-Detects:
+DECISION LOGIC:
+- If blocked=true: do NOT deliver the response. Regenerate with a modified prompt or return the user_message as a safe fallback.
+- If blocked=false: the response is safe to deliver.
+
+Detects in LLM output:
 - System prompt leaks (LLM revealing its instructions)
 - Unexpected PII in output (PII not present in the original prompt)
 - Toxic or hostile language in generated content
 - Topic drift (response diverges from prompt intent)
-- Policy violations in generated content
 
-Provide the original_prompt for best results — it enables PII diff analysis
-and topic mismatch detection.
+Provide original_prompt for best results — it enables PII diff analysis and topic mismatch detection.
+When pii_tokens is provided (from scan_prompt with redact_pii=true), safe responses include rehydrated_response with PII tokens restored.
 
-When pii_tokens is provided (from scan_prompt with redact_pii=true), the response
-is rehydrated after scanning. Tokens like [EMAIL_1] are replaced with the original
-values. The rehydrated text is returned as rehydrated_response.
+Enterprise context: Paired with scan_prompt, this completes the inbound/outbound scan pattern that prevents data exfiltration through model outputs and ensures compliance with data handling policies.
 
-Returns:
-- blocked: true/false
-- threat_type: category of threat detected
-- severity/confidence/guidance: security assessment details
-- rehydrated_response: (when pii_tokens provided and response is safe) text with PII restored
-- request_id: unique identifier`,
+ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOCKING the response. Do NOT deliver unscanned LLM output.`,
   inputSchema: {
     type: 'object' as const,
     properties: {

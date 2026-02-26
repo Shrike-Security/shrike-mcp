@@ -6,7 +6,7 @@
  *
  * Tool Selection Modes:
  *   Mode A (Selective): SHRIKE_TOOLS=scan_prompt,scan_sql_query (env) or X-Shrike-Tools header (HTTP)
- *   Mode B (All):       Default — all 7 tools register. Backwards compatible.
+ *   Mode B (All):       Default — all 8 tools register. Backwards compatible.
  *   Mode C (Bundled):   SHRIKE_MODE=bundled — single shrike_scan tool. Minimum context footprint.
  */
 
@@ -38,6 +38,7 @@ import { scanWebSearch, scanWebSearchTool } from './tools/webSearch.js';
 import { scanSQLQuery, scanSQLQueryTool } from './tools/sqlQuery.js';
 import { scanFileWrite, scanFileWriteTool } from './tools/fileWrite.js';
 import { scanResponse, scanResponseTool } from './tools/scanResponse.js';
+import { checkApproval, checkApprovalTool } from './tools/checkApproval.js';
 import { syncPIIPatterns } from './utils/piiSync.js';
 import { createKeyProvider } from './keyProvider.js';
 import { KeyRotationManager } from './keyRotation.js';
@@ -83,7 +84,7 @@ HTTP Endpoints (when MCP_TRANSPORT=http):
   GET  /.well-known/agent-card.json  Agent discovery metadata
 
 Tools: scan_prompt, scan_response, scan_sql_query, scan_file_write,
-       scan_web_search, report_bypass, get_threat_intel
+       scan_web_search, report_bypass, get_threat_intel, check_approval
 
 Docs: https://github.com/Shrike-Security/shrike-mcp`);
   process.exit(0);
@@ -138,6 +139,10 @@ const TOOL_REGISTRY: Record<string, {
     definition: getThreatIntelTool,
     handler: (a, _c) => getThreatIntel(a),
   },
+  check_approval: {
+    definition: checkApprovalTool,
+    handler: (a, c) => checkApproval(a, c),
+  },
 };
 
 /**
@@ -153,13 +158,14 @@ const BUNDLED_TOOL_DEFINITION = {
 - file_write: Validate file writes for traversal/secrets
 - web_search: Check search queries for SSRF/PII
 - report_bypass: Report missed threats for community defense
-- threat_intel: Get latest threat patterns`,
+- threat_intel: Get latest threat patterns
+- check_approval: Check or decide on pending human approvals`,
   inputSchema: {
     type: 'object' as const,
     properties: {
       type: {
         type: 'string',
-        enum: ['prompt', 'response', 'sql_query', 'file_write', 'web_search', 'report_bypass', 'threat_intel'],
+        enum: ['prompt', 'response', 'sql_query', 'file_write', 'web_search', 'report_bypass', 'threat_intel', 'check_approval'],
         description: 'Scan type to perform',
       },
       input: {
@@ -188,6 +194,7 @@ const BUNDLED_TYPE_MAP: Record<string, string> = {
   web_search: 'scan_web_search',
   report_bypass: 'report_bypass',
   threat_intel: 'get_threat_intel',
+  check_approval: 'check_approval',
 };
 
 /**
@@ -235,6 +242,9 @@ function validateToolArgs(name: string, args: Record<string, unknown> | undefine
       if (!args?.prompt && !args?.filePath && !args?.fileContent && !args?.sqlQuery && !args?.searchQuery) {
         throw new McpError(ErrorCode.InvalidParams, 'At least one of prompt, filePath, fileContent, sqlQuery, or searchQuery is required');
       }
+      break;
+    case 'check_approval':
+      if (!args?.approval_id) throw new McpError(ErrorCode.InvalidParams, 'approval_id is required');
       break;
     // get_threat_intel has no required params
   }

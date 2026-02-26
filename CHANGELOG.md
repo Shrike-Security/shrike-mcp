@@ -4,6 +4,41 @@ All notable changes to shrike-mcp will be documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.0.0] - 2026-02-26
+
+### Added
+- Human-in-the-loop approval engine: three-tier action model (allow/require_approval/block) (SHRIKE-204)
+- New MCP tool: `check_approval` — poll approval status and submit decisions
+- New response action: `require_approval` with `approval_id`, `approval_context`, and polling instructions
+- Approval policies: configurable per-org rules for when human approval is required
+- Approval API: create, decide, status, list, pending, stats, cancel endpoints
+- Expiration: auto-expire pending approvals after configurable timeout (default 30 min)
+- Webhook notifications: approval_created, approval_expiring, approval_decided, approval_expired events
+- Content-hash dedup: prevents duplicate approval requests for the same action
+
+### Changed
+- `SanitizedResponse` union type now includes `SanitizedApprovalResponse`
+- Tool count: 7 → 8 (added check_approval)
+- `blocked: true` for require_approval responses ensures agents that only check `blocked` will safely halt
+
+## [2.2.0] - 2026-02-26
+
+### Added
+- Enterprise response format: `action`, `agent_instruction`, `user_message`, `audit`, `owasp_category` fields on all scan responses (SHRIKE-201)
+- OWASP LLM Top 10 mapping for all threat types
+- Per-tool `agent_instruction` templates for blocked and safe responses
+- User-safe `user_message` templates that never leak detection details
+- Audit block with `scan_id`, `timestamp`, `policy_name`, `framework_references`
+- Fail-closed error handling guidance in all tool descriptions (SHRIKE-202)
+
+### Changed
+- All 7 tool descriptions rewritten with enterprise three-part structure: timing, decision logic, enterprise context (SHRIKE-200)
+- `report_bypass` description uses 3 concrete invocation triggers instead of vague "suspect"
+- `scan_sql_query` description differentiates read vs write query risk
+- `scan_file_write` description explicitly covers read operations (path traversal)
+- `get_threat_intel` description includes caching guidance (1 hour)
+- Existing fields (`blocked`, `threat_type`, `severity`, `confidence`, `guidance`, `request_id`) preserved for backward compatibility
+
 ## [2.1.1] - 2026-02-26
 
 ### Changed

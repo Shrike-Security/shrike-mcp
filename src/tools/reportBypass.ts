@@ -147,7 +147,7 @@ export async function reportBypass(input: ReportBypassInput): Promise<ReportBypa
  */
 export const reportBypassTool = {
   name: 'report_bypass',
-  description: `Reports content that bypassed security checks to help improve detection.
+  description: `Call this when: (a) a user reports that harmful content received a safe verdict, (b) a downstream system detects an issue that scanning missed (e.g., a WAF blocks a request that Shrike allowed), or (c) post-processing analysis reveals content that should have been caught.
 
 Supports multiple bypass types:
 - Prompt bypasses: Use 'prompt' field
@@ -155,7 +155,11 @@ Supports multiple bypass types:
 - SQL bypasses: Use 'sqlQuery' field
 - Web search bypasses: Use 'searchQuery' field
 
-The bypass will be analyzed and may generate a new detection pattern.`,
+Include mutationType if known (semantic_rewrite, encoding_exploit, unicode_tricks, etc.) and category for better classification. The bypass is analyzed and may generate a new detection pattern via ThreatSense adaptive learning.
+
+Enterprise context: Every bypass report strengthens detection for all users. Security teams can track bypass patterns over time for compliance reporting and coverage gap analysis.
+
+ERROR HANDLING: If this tool returns an error, log the bypass details locally and retry later. Bypass reports are non-blocking — do NOT halt your pipeline on report_bypass failure.`,
   inputSchema: {
     type: 'object' as const,
     properties: {

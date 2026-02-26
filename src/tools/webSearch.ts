@@ -39,6 +39,14 @@ export interface WebSearchResult {
     queryLength: number;
     domainsChecked: number;
   };
+  approvalInfo?: {
+    requires_approval: boolean;
+    approval_id: string;
+    approval_level: string;
+    action_summary: string;
+    policy_name: string;
+    expires_in_seconds: number;
+  };
 }
 
 /**
@@ -52,6 +60,14 @@ interface BackendSpecializedResponse {
   confidence: number;
   content_type: string;
   scan_time_ms: number;
+  approval_info?: {
+    requires_approval: boolean;
+    approval_id: string;
+    approval_level: string;
+    action_summary: string;
+    policy_name: string;
+    expires_in_seconds: number;
+  };
 }
 
 // Blocked/suspicious domains (client-side check for speed - supplementary to backend)
@@ -174,7 +190,7 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
       } else {
         console.error(`[web] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return sanitizeWebSearchResult(internalResult, requestId);
+      return sanitizeWebSearchResult(internalResult, requestId, 'scan_web_search');
     }
 
     const data = await response.json() as BackendSpecializedResponse;
@@ -261,6 +277,7 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
         queryLength: input.query.length,
         domainsChecked,
       },
+      approvalInfo: data.approval_info,
     };
 
     // Log scan result
@@ -271,7 +288,7 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
     }
 
     // Return sanitized response (protects IP)
-    return sanitizeWebSearchResult(internalResult, requestId);
+    return sanitizeWebSearchResult(internalResult, requestId, 'scan_web_search');
 
   } catch (error) {
     clearTimeout(timeoutId);
@@ -290,7 +307,7 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
     } else {
       console.error(`[web] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
     }
-    return sanitizeWebSearchResult(internalResult, requestId);
+    return sanitizeWebSearchResult(internalResult, requestId, 'scan_web_search');
   }
 }
 
@@ -299,20 +316,20 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
  */
 export const scanWebSearchTool = {
   name: 'scan_web_search',
-  description: `Scans a web search query before execution for security issues.
+  description: `Call this BEFORE executing any web search query on behalf of a user or agent.
+
+DECISION LOGIC:
+- If blocked=true: do NOT execute the search. Return the user_message explaining the query was rejected.
+- If blocked=false: the search query is safe to execute.
 
 Checks for:
 - PII in search queries (SSN, credit cards, API keys, private keys)
 - Data exfiltration patterns (searching for leaked credentials, Google dorks)
 - Blocked/suspicious domains (paste sites, suspicious TLDs)
 
-Returns:
-- blocked: true/false
-- threat_type: blocked_domain, pii_exposure, etc.
-- severity: critical/high/medium/low
-- confidence: high/medium/low
-- guidance: actionable explanation
-- request_id: unique identifier`,
+Enterprise context: Prevents agents from inadvertently leaking internal data (names, account numbers, internal project names) through external search engines.
+
+ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOCKING the search. Do NOT send unscanned queries to external services.`,
   inputSchema: {
     type: 'object' as const,
     properties: {
