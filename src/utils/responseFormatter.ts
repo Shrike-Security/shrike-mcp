@@ -95,6 +95,12 @@ export interface SanitizedApprovalResponse {
     policy_name: string;
     approval_level: string;
     expires_in_seconds: number;
+    // SHRIKE-201: Threat context for block-override approvals
+    threat_type?: string;
+    severity?: string;
+    owasp_category?: string;
+    risk_factors?: string[];
+    original_action?: string; // "block" when overriding a block verdict
   };
   agent_instruction: string;
   user_message: string;
@@ -549,6 +555,12 @@ interface InternalScanResult {
     action_summary: string;
     policy_name: string;
     expires_in_seconds: number;
+    // SHRIKE-201: Block-override threat context
+    threat_type?: string;
+    severity?: string;
+    owasp_category?: string;
+    risk_factors?: string[];
+    original_action?: string;
   };
 }
 
@@ -579,6 +591,12 @@ interface InternalSpecializedResult {
     action_summary: string;
     policy_name: string;
     expires_in_seconds: number;
+    // SHRIKE-201: Block-override threat context
+    threat_type?: string;
+    severity?: string;
+    owasp_category?: string;
+    risk_factors?: string[];
+    original_action?: string;
   };
 }
 
@@ -590,18 +608,41 @@ function buildApprovalResponse(
   requestId: string,
 ): SanitizedApprovalResponse {
   const expiresMinutes = Math.ceil(approvalInfo.expires_in_seconds / 60);
+  const isBlockOverride = approvalInfo.original_action === 'block';
+
+  // Build approval context with optional threat fields
+  const approvalContext: SanitizedApprovalResponse['approval_context'] = {
+    action_summary: approvalInfo.action_summary,
+    policy_name: approvalInfo.policy_name,
+    approval_level: approvalInfo.approval_level,
+    expires_in_seconds: approvalInfo.expires_in_seconds,
+  };
+
+  // SHRIKE-201: Include threat context for block-override approvals
+  if (isBlockOverride) {
+    if (approvalInfo.threat_type) approvalContext.threat_type = approvalInfo.threat_type;
+    if (approvalInfo.severity) approvalContext.severity = approvalInfo.severity;
+    if (approvalInfo.owasp_category) approvalContext.owasp_category = approvalInfo.owasp_category;
+    if (approvalInfo.risk_factors?.length) approvalContext.risk_factors = approvalInfo.risk_factors;
+    approvalContext.original_action = 'block';
+  }
+
+  // Differentiate messages for block-override vs on_safe approvals
+  const agentInstruction = isBlockOverride
+    ? `HOLD: This action was BLOCKED by security policy (${approvalInfo.threat_type || 'threat detected'}) but an override approval has been requested. Present the approval_context to the user including the threat type, severity, and risk factors. Do NOT proceed with the original action. Do NOT poll in a loop. Wait for the user to instruct you to check the approval status using check_approval.`
+    : 'HOLD: This action requires human approval before proceeding. Present the approval_context to the user (action summary, policy name, expiration). Do NOT proceed with the original action. Do NOT poll in a loop. Wait for the user to instruct you to check the approval status using check_approval.';
+
+  const userMessage = isBlockOverride
+    ? `This action was blocked by security policy (${approvalInfo.threat_type || 'threat detected'}) but a human override has been requested. Approval ID: ${approvalInfo.approval_id}. A reviewer must approve or reject within ${expiresMinutes} minutes.`
+    : `This action requires approval from your security team before it can proceed. Approval ID: ${approvalInfo.approval_id}. It will expire in ${expiresMinutes} minutes if not reviewed.`;
+
   return {
     blocked: true,
     action: 'require_approval',
     approval_id: approvalInfo.approval_id,
-    approval_context: {
-      action_summary: approvalInfo.action_summary,
-      policy_name: approvalInfo.policy_name,
-      approval_level: approvalInfo.approval_level,
-      expires_in_seconds: approvalInfo.expires_in_seconds,
-    },
-    agent_instruction: 'HOLD: This action requires human approval before proceeding. Present the approval_context to the user (action summary, policy name, expiration). Do NOT proceed with the original action. Do NOT poll in a loop. Wait for the user to instruct you to check the approval status using check_approval.',
-    user_message: `This action requires approval from your security team before it can proceed. Approval ID: ${approvalInfo.approval_id}. It will expire in ${expiresMinutes} minutes if not reviewed.`,
+    approval_context: approvalContext,
+    agent_instruction: agentInstruction,
+    user_message: userMessage,
     audit: {
       scan_id: requestId,
       timestamp: new Date().toISOString(),
@@ -622,8 +663,9 @@ export function sanitizeScanResult(
   requestId: string,
   toolName: string = 'scan_prompt'
 ): SanitizedResponse {
-  // Check for approval requirement (safe scan but policy requires human sign-off)
-  if (result.safe && result.approvalInfo?.requires_approval) {
+  // Check for approval requirement (on_safe or block-override)
+  // SHRIKE-201: Removed result.safe gate — block-override sets approvalInfo on blocked content
+  if (result.approvalInfo?.requires_approval) {
     return buildApprovalResponse(result.approvalInfo, requestId);
   }
 
@@ -678,7 +720,8 @@ export function sanitizeSQLResult(
   requestId: string,
   toolName: string = 'scan_sql_query'
 ): SanitizedResponse {
-  if (result.safe && result.approvalInfo?.requires_approval) {
+  // SHRIKE-201: Removed result.safe gate — block-override sets approvalInfo on blocked content
+  if (result.approvalInfo?.requires_approval) {
     return buildApprovalResponse(result.approvalInfo, requestId);
   }
   if (result.safe && result.recommendedAction === 'allow') {
@@ -727,7 +770,8 @@ export function sanitizeFileWriteResult(
   requestId: string,
   toolName: string = 'scan_file_write'
 ): SanitizedResponse {
-  if (result.safe && result.approvalInfo?.requires_approval) {
+  // SHRIKE-201: Removed result.safe gate — block-override sets approvalInfo on blocked content
+  if (result.approvalInfo?.requires_approval) {
     return buildApprovalResponse(result.approvalInfo, requestId);
   }
   if (result.safe && result.recommendedAction === 'allow') {
@@ -776,7 +820,8 @@ export function sanitizeWebSearchResult(
   requestId: string,
   toolName: string = 'scan_web_search'
 ): SanitizedResponse {
-  if (result.safe && result.approvalInfo?.requires_approval) {
+  // SHRIKE-201: Removed result.safe gate — block-override sets approvalInfo on blocked content
+  if (result.approvalInfo?.requires_approval) {
     return buildApprovalResponse(result.approvalInfo, requestId);
   }
   if (result.safe && result.recommendedAction === 'allow') {

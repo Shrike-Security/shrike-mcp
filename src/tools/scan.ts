@@ -296,6 +296,12 @@ export interface BackendResponse {
     action_summary: string;
     policy_name: string;
     expires_in_seconds: number;
+    // SHRIKE-201: Block-override threat context
+    threat_type?: string;
+    severity?: string;
+    owasp_category?: string;
+    risk_factors?: string[];
+    original_action?: string;
   };
 }
 

@@ -182,7 +182,58 @@ describe('responseFormatter', () => {
         }
       });
 
-      it('should NOT return approval when safe=false (blocked wins)', () => {
+      it('should return require_approval when safe=false but approvalInfo present (SHRIKE-201 block-override)', () => {
+        const blockOverrideApprovalInfo = {
+          ...approvalInfo,
+          threat_type: 'data_exfiltration',
+          severity: 'high',
+          owasp_category: 'LLM02',
+          risk_factors: ['data_exfiltration: Data Export Policy (severity: HIGH, confidence: 85%)'],
+          original_action: 'block',
+        };
+
+        const internalResult = {
+          safe: false,
+          threatLevel: 'high',
+          confidence: 0.95,
+          recommendedAction: 'block' as const,
+          violations: [
+            {
+              threatType: 'data_exfiltration',
+              severity: 'high',
+              confidence: 0.95,
+              action: 'block',
+              detectedBy: 'regex',
+              message: 'Test',
+              policyId: 'pol-1',
+              policyName: 'Test',
+            },
+          ],
+          performance: {
+            totalScanTimeMs: 100,
+            policiesEvaluated: 10,
+            llmAnalysisUsed: false,
+            cacheHits: 0,
+          },
+          approvalInfo: blockOverrideApprovalInfo,
+        };
+
+        const sanitized = sanitizeScanResult(internalResult, requestId);
+
+        // SHRIKE-201: block-override routes to require_approval
+        expect(sanitized.blocked).toBe(true);
+        expect(sanitized.action).toBe('require_approval');
+        if (sanitized.action === 'require_approval') {
+          expect(sanitized.approval_context.original_action).toBe('block');
+          expect(sanitized.approval_context.threat_type).toBe('data_exfiltration');
+          expect(sanitized.approval_context.severity).toBe('high');
+          expect(sanitized.approval_context.risk_factors).toBeDefined();
+          expect(sanitized.agent_instruction).toContain('BLOCKED');
+          expect(sanitized.user_message).toContain('blocked');
+        }
+      });
+
+      it('should still hard-block when safe=false and NO approvalInfo', () => {
         const internalResult = {
           safe: false,
           threatLevel: 'high',
@@ -206,13 +257,13 @@ describe('responseFormatter', () => {
             llmAnalysisUsed: false,
             cacheHits: 0,
           },
-          approvalInfo, // present but should be ignored because safe=false
+          // NO approvalInfo → hard block
         };
 
         const sanitized = sanitizeScanResult(internalResult, requestId);
 
         expect(sanitized.blocked).toBe(true);
-        expect(sanitized.action).toBe('block'); // block, not require_approval
+        expect(sanitized.action).toBe('block');
       });
 
       it('should return allow when safe with no approvalInfo', () => {
@@ -635,6 +686,162 @@ describe('responseFormatter', () => {
       if (sanitized.blocked) {
         expect(sanitized.threat_type).toBe('blocked_domain');
         expect(sanitized.guidance).toContain('restricted domain');
+      }
+    });
+  });
+
+  // =========================================================================
+  // BLOCK-OVERRIDE TESTS (SHRIKE-201)
+  // =========================================================================
+
+  describe('block-override approval (SHRIKE-201)', () => {
+    const requestId = 'req_block_override_test';
+
+    const blockOverrideApprovalInfo = {
+      requires_approval: true,
+      approval_id: 'appr-block-override-123',
+      approval_level: 'edge',
+      action_summary: 'BLOCKED [HIGH] scan_sql_query — destructive_operation detected',
+      policy_name: 'Staging Override Policy',
+      expires_in_seconds: 900,
+      threat_type: 'destructive_operation',
+      severity: 'high',
+      owasp_category: 'LLM06',
+      risk_factors: ['destructive_operation: SQL Destructive Op (severity: HIGH, confidence: 92%)'],
+      original_action: 'block',
+    };
+
+    it('sanitizeSQLResult: block-override returns require_approval', () => {
+      const internalResult = {
+        safe: false,
+        threatLevel: 'high',
+        confidence: 0.92,
+        recommendedAction: 'block' as const,
+        issues: [{ type: 'destructive_operation', severity: 'high', message: 'DROP TABLE detected' }],
+        metadata: { scanTimeMs: 25, queryLength: 30, statementType: 'DROP' },
+        approvalInfo: blockOverrideApprovalInfo,
+      };
+
+      const sanitized = sanitizeSQLResult(internalResult, requestId);
+
+      expect(sanitized.blocked).toBe(true);
+      expect(sanitized.action).toBe('require_approval');
+      if (sanitized.action === 'require_approval') {
+        expect(sanitized.approval_context.original_action).toBe('block');
+        expect(sanitized.approval_context.threat_type).toBe('destructive_operation');
+        expect(sanitized.approval_context.owasp_category).toBe('LLM06');
+        expect(sanitized.approval_context.risk_factors).toHaveLength(1);
+        expect(sanitized.agent_instruction).toContain('BLOCKED');
+        expect(sanitized.user_message).toContain('blocked');
+      }
+    });
+
+    it('sanitizeFileWriteResult: block-override returns require_approval', () => {
+      const fileApprovalInfo = {
+        ...blockOverrideApprovalInfo,
+        threat_type: 'secrets_exposure',
+        action_summary: 'BLOCKED [HIGH] scan_file_write — secrets_exposure detected',
+      };
+
+      const internalResult = {
+        safe: false,
+        threatLevel: 'high',
+        confidence: 0.88,
+        recommendedAction: 'block' as const,
+        issues: [{ type: 'secrets_exposure', severity: 'high', message: 'Connection string detected' }],
+        metadata: { scanTimeMs: 15, pathLength: 40, contentLength: 200, fileExtension: 'yaml' },
+        approvalInfo: fileApprovalInfo,
+      };
+
+      const sanitized = sanitizeFileWriteResult(internalResult, requestId);
+
+      expect(sanitized.blocked).toBe(true);
+      expect(sanitized.action).toBe('require_approval');
+      if (sanitized.action === 'require_approval') {
+        expect(sanitized.approval_context.original_action).toBe('block');
+        expect(sanitized.approval_context.threat_type).toBe('secrets_exposure');
+      }
+    });
+
+    it('sanitizeWebSearchResult: block-override returns require_approval', () => {
+      const webApprovalInfo = {
+        ...blockOverrideApprovalInfo,
+        threat_type: 'data_exfiltration',
+        action_summary: 'BLOCKED [HIGH] scan_web_search — data_exfiltration detected',
+      };
+
+      const internalResult = {
+        safe: false,
+        threatLevel: 'high',
+        confidence: 0.85,
+        recommendedAction: 'block' as const,
+        issues: [{ type: 'data_exfiltration', severity: 'high', message: 'PII in search query' }],
+        metadata: { scanTimeMs: 20, queryLength: 50, domainsChecked: 0 },
+        approvalInfo: webApprovalInfo,
+      };
+
+      const sanitized = sanitizeWebSearchResult(internalResult, requestId);
+
+      expect(sanitized.blocked).toBe(true);
+      expect(sanitized.action).toBe('require_approval');
+      if (sanitized.action === 'require_approval') {
+        expect(sanitized.approval_context.original_action).toBe('block');
+      }
+    });
+
+    it('all sanitize functions still hard-block when no approvalInfo', () => {
+      const blockedScanResult = {
+        safe: false,
+        threatLevel: 'high',
+        confidence: 0.95,
+        recommendedAction: 'block' as const,
+        violations: [{ threatType: 'prompt_injection', severity: 'high', confidence: 0.95, action: 'block', detectedBy: 'regex', message: 'Test', policyId: 'pol-1', policyName: 'Test' }],
+        performance: { totalScanTimeMs: 100, policiesEvaluated: 10, llmAnalysisUsed: false, cacheHits: 0 },
+      };
+      const blockedSpecResult = {
+        safe: false,
+        threatLevel: 'high',
+        confidence: 0.95,
+        recommendedAction: 'block' as const,
+        issues: [{ type: 'sql_injection', severity: 'high', message: 'Test' }],
+        metadata: { scanTimeMs: 20 },
+      };
+
+      expect(sanitizeScanResult(blockedScanResult, requestId).action).toBe('block');
+      expect(sanitizeSQLResult(blockedSpecResult, requestId).action).toBe('block');
+      expect(sanitizeFileWriteResult(blockedSpecResult, requestId).action).toBe('block');
+      expect(sanitizeWebSearchResult(blockedSpecResult, requestId).action).toBe('block');
+    });
+
+    it('on_safe approval context should NOT have threat fields', () => {
+      const onSafeApprovalInfo = {
+        requires_approval: true,
+        approval_id: 'appr-safe-123',
+        approval_level: 'edge',
+        action_summary: 'DELETE FROM users',
+        policy_name: 'Production DELETE Policy',
+        expires_in_seconds: 1800,
+        // No threat_type, severity, original_action etc.
+      };
+
+      const internalResult = {
+        safe: true,
+        threatLevel: 'none',
+        confidence: 0,
+        recommendedAction: 'allow' as const,
+        violations: [],
+        performance: { totalScanTimeMs: 50, policiesEvaluated: 5, llmAnalysisUsed: false, cacheHits: 0 },
+        approvalInfo: onSafeApprovalInfo,
+      };
+
+      const sanitized = sanitizeScanResult(internalResult, requestId);
+
+      expect(sanitized.action).toBe('require_approval');
+      if (sanitized.action === 'require_approval') {
+        expect(sanitized.approval_context.original_action).toBeUndefined();
+        expect(sanitized.approval_context.threat_type).toBeUndefined();
+        expect(sanitized.agent_instruction).not.toContain('BLOCKED');
+        expect(sanitized.agent_instruction).toContain('HOLD');
       }
     });
   });
