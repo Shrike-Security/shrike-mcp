@@ -129,7 +129,7 @@ export function getAuthHeaders(): Record<string, string> {
 
 /** All valid tool names that can be used with SHRIKE_TOOLS */
 export const VALID_TOOL_NAMES = [
-  'scan_prompt', 'scan_response', 'scan_sql_query',
+  'scan_prompt', 'scan_response', 'scan_sql_query', 'scan_command',
   'scan_file_write', 'scan_web_search', 'report_bypass', 'get_threat_intel',
   'check_approval',
 ] as const;

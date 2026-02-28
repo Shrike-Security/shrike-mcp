@@ -279,6 +279,8 @@ const AGENT_INSTRUCTIONS_BLOCKED: Record<string, string> = {
     'Do NOT write this file. The content or destination is unsafe. Return the user_message to the caller.',
   scan_web_search:
     'Do NOT execute this search. The query contains information that should not be sent to external search engines. Return the user_message.',
+  scan_command:
+    'Do NOT execute this command. It contains unsafe patterns (data exfiltration, destructive operations, or privilege escalation). Return the user_message to the caller.',
 };
 
 const AGENT_INSTRUCTION_ALLOWED = 'Content is safe. Proceed with normal processing.';
@@ -851,6 +853,56 @@ export function sanitizeWebSearchResult(
     confidence,
     guidance: getGuidance(threatType),
     agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_web_search'],
+    user_message: USER_MESSAGES[threatType],
+    audit: {
+      scan_id: requestId,
+      timestamp: new Date().toISOString(),
+      policy_name: 'Security Policy',
+      framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
+    },
+    request_id: requestId,
+  };
+}
+
+/**
+ * Sanitizes scan_command result.
+ */
+export function sanitizeCommandResult(
+  result: InternalSpecializedResult,
+  requestId: string,
+  toolName: string = 'scan_command'
+): SanitizedResponse {
+  // SHRIKE-201: block-override sets approvalInfo on blocked content
+  if (result.approvalInfo?.requires_approval) {
+    return buildApprovalResponse(result.approvalInfo, requestId);
+  }
+  if (result.safe && result.recommendedAction === 'allow') {
+    return {
+      blocked: false,
+      action: 'allow',
+      agent_instruction: AGENT_INSTRUCTION_ALLOWED,
+      audit: {
+        scan_id: requestId,
+        timestamp: new Date().toISOString(),
+      },
+      request_id: requestId,
+    };
+  }
+
+  const primaryIssue = result.issues[0];
+  const threatType = normalizeThreatType(primaryIssue?.type || 'malicious_code');
+  const severity = getHighestSeverity(result.issues.map((i) => i.severity));
+  const confidence = bucketConfidence(result.confidence);
+
+  return {
+    blocked: true,
+    action: 'block',
+    threat_type: threatType,
+    owasp_category: OWASP_MAPPING[threatType],
+    severity,
+    confidence,
+    guidance: getGuidance(threatType),
+    agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_command'],
     user_message: USER_MESSAGES[threatType],
     audit: {
       scan_id: requestId,

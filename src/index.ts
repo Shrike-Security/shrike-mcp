@@ -6,7 +6,7 @@
  *
  * Tool Selection Modes:
  *   Mode A (Selective): SHRIKE_TOOLS=scan_prompt,scan_sql_query (env) or X-Shrike-Tools header (HTTP)
- *   Mode B (All):       Default — all 8 tools register. Backwards compatible.
+ *   Mode B (All):       Default — all 9 tools register. Backwards compatible.
  *   Mode C (Bundled):   SHRIKE_MODE=bundled — single shrike_scan tool. Minimum context footprint.
  */
 
@@ -36,6 +36,7 @@ import { reportBypass, reportBypassTool } from './tools/reportBypass.js';
 import { getThreatIntel, getThreatIntelTool } from './tools/threatIntel.js';
 import { scanWebSearch, scanWebSearchTool } from './tools/webSearch.js';
 import { scanSQLQuery, scanSQLQueryTool } from './tools/sqlQuery.js';
+import { scanCommand, scanCommandTool } from './tools/command.js';
 import { scanFileWrite, scanFileWriteTool } from './tools/fileWrite.js';
 import { scanResponse, scanResponseTool } from './tools/scanResponse.js';
 import { checkApproval, checkApprovalTool } from './tools/checkApproval.js';
@@ -66,7 +67,7 @@ Usage:
 Environment Variables:
   SHRIKE_API_KEY               API key for authenticated scans (enables LLM layers)
   SHRIKE_BACKEND_URL           Backend API URL (default: https://api.shrikesecurity.com/agent)
-  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 7)
+  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 9)
   SHRIKE_MODE                  Tool mode: bundled (single shrike_scan tool) or omit for normal
   MCP_TRANSPORT                Transport mode: stdio (default) or http
   MCP_PORT                     HTTP server port (default: 8000, used in http mode)
@@ -83,8 +84,9 @@ HTTP Endpoints (when MCP_TRANSPORT=http):
   GET  /health                 Health check for load balancers
   GET  /.well-known/agent-card.json  Agent discovery metadata
 
-Tools: scan_prompt, scan_response, scan_sql_query, scan_file_write,
-       scan_web_search, report_bypass, get_threat_intel, check_approval
+Tools: scan_prompt, scan_response, scan_sql_query, scan_command,
+       scan_file_write, scan_web_search, report_bypass, get_threat_intel,
+       check_approval
 
 Docs: https://github.com/Shrike-Security/shrike-mcp`);
   process.exit(0);
@@ -123,6 +125,10 @@ const TOOL_REGISTRY: Record<string, {
     definition: scanSQLQueryTool,
     handler: (a, c) => scanSQLQuery(a, c),
   },
+  scan_command: {
+    definition: scanCommandTool,
+    handler: (a, c) => scanCommand(a, c),
+  },
   scan_file_write: {
     definition: scanFileWriteTool,
     handler: (a, c) => scanFileWrite(a, c),
@@ -155,6 +161,7 @@ const BUNDLED_TOOL_DEFINITION = {
 - prompt: Scan prompts for injection, PII, toxicity
 - response: Scan LLM responses for data leaks
 - sql_query: Detect SQL injection in queries
+- command: Scan CLI commands for exfiltration, RCE, destructive ops
 - file_write: Validate file writes for traversal/secrets
 - web_search: Check search queries for SSRF/PII
 - report_bypass: Report missed threats for community defense
@@ -165,12 +172,12 @@ const BUNDLED_TOOL_DEFINITION = {
     properties: {
       type: {
         type: 'string',
-        enum: ['prompt', 'response', 'sql_query', 'file_write', 'web_search', 'report_bypass', 'threat_intel', 'check_approval'],
+        enum: ['prompt', 'response', 'sql_query', 'command', 'file_write', 'web_search', 'report_bypass', 'threat_intel', 'check_approval'],
         description: 'Scan type to perform',
       },
       input: {
         type: 'object',
-        description: 'Input for the scan. For prompt: {content, context?, redact_pii?}. For sql_query: {query, database?}. For file_write: {path, content, mode?}. For web_search: {query, targetDomains?}. For response: {response, original_prompt?}. For report_bypass: {prompt?, sqlQuery?, ...}. For threat_intel: {category?, limit?}.',
+        description: 'Input for the scan. For prompt: {content, context?, redact_pii?}. For sql_query: {query, database?}. For command: {command, shell?, execution_context?}. For file_write: {path, content, mode?}. For web_search: {query, targetDomains?}. For response: {response, original_prompt?}. For report_bypass: {prompt?, sqlQuery?, ...}. For threat_intel: {category?, limit?}.',
         additionalProperties: true,
       },
     },
@@ -190,6 +197,7 @@ const BUNDLED_TYPE_MAP: Record<string, string> = {
   prompt: 'scan_prompt',
   response: 'scan_response',
   sql_query: 'scan_sql_query',
+  command: 'scan_command',
   file_write: 'scan_file_write',
   web_search: 'scan_web_search',
   report_bypass: 'report_bypass',
@@ -230,6 +238,9 @@ function validateToolArgs(name: string, args: Record<string, unknown> | undefine
       break;
     case 'scan_sql_query':
       if (!args?.query) throw new McpError(ErrorCode.InvalidParams, 'query is required');
+      break;
+    case 'scan_command':
+      if (!args?.command) throw new McpError(ErrorCode.InvalidParams, 'command is required');
       break;
     case 'scan_file_write':
       if (!args?.path) throw new McpError(ErrorCode.InvalidParams, 'path is required');
@@ -558,7 +569,7 @@ async function startStdio(): Promise<void> {
 
   const toolCount = config.mode === 'bundled'
     ? '1 (bundled)'
-    : (config.enabledTools ? `${resolveEnabledTools(config.enabledTools).length} (selective)` : '7');
+    : (config.enabledTools ? `${resolveEnabledTools(config.enabledTools).length} (selective)` : '9');
   console.error(`Shrike MCP Server running on stdio transport (${toolCount} tools)`);
 }
 
