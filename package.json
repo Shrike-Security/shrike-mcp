@@ -1,7 +1,7 @@
 {
   "name": "shrike-mcp",
   "mcpName": "io.github.Shrike-Security/shrike-mcp",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "description": "MCP server that gives AI agents 8 security tools powered by a multi-stage detection pipeline. Scans prompts, responses, SQL, file writes, and web searches for injection attacks, PII leaks, and policy violations. Human-in-the-loop approval engine for enterprise compliance.",
   "type": "module",
   "main": "./dist/index.js",

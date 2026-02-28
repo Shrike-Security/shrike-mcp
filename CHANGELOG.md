@@ -4,6 +4,16 @@ All notable changes to shrike-mcp will be documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.3.0] - 2026-02-28
+
+### Security
+- SHRIKE-401: Agent self-approval bypass prevention
+  - High/critical approvals now require dashboard authentication (JWT) — MCP-submitted decisions are rejected with `DASHBOARD_REQUIRED`
+  - 60-second cooldown on low/medium MCP-submitted decisions — prevents instant agent self-approval (`COOLDOWN_ACTIVE`)
+  - Self-approval blocked — the entity that triggered a scan cannot approve its own request (`SELF_APPROVAL_BLOCKED`)
+  - Scanner service `/decide` route removed — decisions only available via dashboard (`SCANNER_ROUTE_DENIED`)
+  - `check_approval` tool updated with structured 403 error handling and user-facing guidance for all enforcement scenarios
+
 ## [3.2.0] - 2026-02-28
 
 ### Added
