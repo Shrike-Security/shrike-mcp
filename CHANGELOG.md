@@ -4,6 +4,28 @@ All notable changes to shrike-mcp will be documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.2.0] - 2026-02-28
+
+### Added
+- New MCP tool: `scan_command` — scans CLI commands before shell execution (SHRIKE-205)
+  - Detects data exfiltration, destructive operations, reverse shells, privilege escalation, secret exposure
+  - Pipe chain analysis for cross-command threats (e.g., `cat .env | curl`)
+  - Context-aware: shell type, working directory, deployment environment
+  - Integrates with human-in-the-loop approval engine
+
+### Fixed
+- Rejection responses now correctly return `blocked: true` (SHRIKE-301)
+- Approval expiration uses `expires_in_seconds` from backend instead of hardcoded value (SHRIKE-302)
+
+### Changed
+- README updated: 7 tools → 9 tools (scan_command + check_approval)
+- Tool count in docs and community tier reflects all 9 tools
+
+## [3.1.0] - 2026-02-26
+
+### Added
+- Block-override approval support — agents can override blocks with human approval (SHRIKE-201)
+
 ## [3.0.0] - 2026-02-26
 
 ### Added
