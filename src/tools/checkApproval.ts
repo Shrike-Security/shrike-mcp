@@ -21,17 +21,12 @@ export interface CheckApprovalInput {
 interface ApprovalStatusResponse {
   id: string;
   status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
-  approval_level: string;
-  action_summary: string;
-  policy_name: string;
-  expires_at: string;
-  edge_decided_by?: string;
-  edge_decided_at?: string;
-  edge_justification?: string;
-  security_decided_by?: string;
-  security_decided_at?: string;
-  security_justification?: string;
+  // SHRIKE-302: Backend returns expires_in_seconds (precomputed), not expires_at
+  expires_in_seconds?: number;
+  decided_by?: string;
+  decided_at?: string;
   decided_via?: string;
+  justification?: string;
 }
 
 /**
@@ -74,12 +69,30 @@ export async function checkApproval(input: CheckApprovalInput, customerId: strin
       const scanTimeMs = Date.now() - startTime;
       console.error(`[check_approval] ${requestId} decision=${input.decision} approval_id=${input.approval_id} time=${scanTimeMs}ms`);
 
+      // SHRIKE-301: Rejection must return blocked:true so agents stop
+      if (input.decision === 'rejected') {
+        return {
+          blocked: true,
+          action: 'block',
+          threat_type: 'unknown' as any,
+          owasp_category: 'N/A',
+          severity: 'medium' as any,
+          confidence: 'high' as any,
+          guidance: `Action rejected.${input.justification ? ` Reason: ${input.justification}` : ''}`,
+          agent_instruction: 'The approval has been REJECTED. Do NOT proceed with the original action. Inform the user of the rejection.',
+          user_message: `The action was rejected by a reviewer.${input.justification ? ` Reason: ${input.justification}` : ' Contact your security team for details.'}`,
+          audit: {
+            scan_id: requestId,
+            timestamp: new Date().toISOString(),
+          },
+          request_id: requestId,
+        };
+      }
+
       return {
         blocked: false,
         action: 'allow',
-        agent_instruction: input.decision === 'approved'
-          ? 'The approval has been APPROVED. You may now proceed with the original action that was held for approval.'
-          : 'The approval has been REJECTED. Do NOT proceed with the original action. Inform the user of the rejection.',
+        agent_instruction: 'The approval has been APPROVED. You may now proceed with the original action that was held for approval.',
         audit: {
           scan_id: requestId,
           timestamp: new Date().toISOString(),
@@ -127,9 +140,8 @@ export async function checkApproval(input: CheckApprovalInput, customerId: strin
  * Builds a status response based on approval state.
  */
 function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): SanitizedResponse {
-  const expiresAt = new Date(data.expires_at);
-  const now = new Date();
-  const expiresInSeconds = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
+  // SHRIKE-302: Backend returns precomputed expires_in_seconds, not expires_at
+  const expiresInSeconds = data.expires_in_seconds ?? 0;
 
   switch (data.status) {
     case 'approved':
@@ -140,7 +152,6 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
         audit: {
           scan_id: requestId,
           timestamp: new Date().toISOString(),
-          policy_name: data.policy_name,
         },
         request_id: requestId,
       };
@@ -153,13 +164,12 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
         owasp_category: 'N/A',
         severity: 'medium',
         confidence: 'high',
-        guidance: `This action was rejected by a human reviewer.${data.edge_justification || data.security_justification ? ` Reason: ${data.edge_justification || data.security_justification}` : ''}`,
+        guidance: `This action was rejected by a human reviewer.${data.justification ? ` Reason: ${data.justification}` : ''}`,
         agent_instruction: 'This action has been REJECTED by a human reviewer. Do NOT proceed with the original action. Inform the user that the action was denied and provide the rejection reason if available.',
-        user_message: `Your requested action was reviewed and rejected.${data.edge_justification || data.security_justification ? ` Reason: ${data.edge_justification || data.security_justification}` : ' Contact your security team for details.'}`,
+        user_message: `Your requested action was reviewed and rejected.${data.justification ? ` Reason: ${data.justification}` : ' Contact your security team for details.'}`,
         audit: {
           scan_id: requestId,
           timestamp: new Date().toISOString(),
-          policy_name: data.policy_name,
         },
         request_id: requestId,
       };
@@ -178,7 +188,6 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
         audit: {
           scan_id: requestId,
           timestamp: new Date().toISOString(),
-          policy_name: data.policy_name,
         },
         request_id: requestId,
       };
@@ -197,32 +206,32 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
         audit: {
           scan_id: requestId,
           timestamp: new Date().toISOString(),
-          policy_name: data.policy_name,
         },
         request_id: requestId,
       };
 
     case 'pending':
-    default:
+    default: {
+      const minutesLeft = Math.ceil(expiresInSeconds / 60);
       return {
         blocked: true,
         action: 'require_approval',
         approval_id: data.id,
         approval_context: {
-          action_summary: data.action_summary,
-          policy_name: data.policy_name,
-          approval_level: data.approval_level,
+          action_summary: (data as any).action_summary || 'Awaiting human approval',
+          policy_name: (data as any).policy_name || 'Approval Policy',
+          approval_level: (data as any).approval_level || 'edge',
           expires_in_seconds: expiresInSeconds,
         },
-        agent_instruction: `This approval is still PENDING (expires in ${Math.ceil(expiresInSeconds / 60)} minutes). Do NOT proceed with the original action. Do NOT poll in a loop. Inform the user that the approval is still awaiting a decision and wait for them to ask you to check again.`,
-        user_message: `Approval is still pending. It will expire in ${Math.ceil(expiresInSeconds / 60)} minutes if not reviewed.`,
+        agent_instruction: `This approval is still PENDING (expires in ${minutesLeft} minutes). Do NOT proceed with the original action. Do NOT poll in a loop. Inform the user that the approval is still awaiting a decision and wait for them to ask you to check again.`,
+        user_message: `Approval is still pending. It will expire in ${minutesLeft} minutes if not reviewed.`,
         audit: {
           scan_id: requestId,
           timestamp: new Date().toISOString(),
-          policy_name: data.policy_name,
         },
         request_id: requestId,
       };
+    }
   }
 }
 

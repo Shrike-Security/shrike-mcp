@@ -38,16 +38,13 @@ describe('checkApproval', () => {
 
   describe('poll mode', () => {
     it('should return require_approval for pending status', async () => {
-      const futureDate = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      // SHRIKE-302: Backend returns expires_in_seconds (precomputed), not expires_at
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
           id: 'approval-123',
           status: 'pending',
-          approval_level: 'edge',
-          action_summary: 'SQL query requires approval',
-          policy_name: 'Production DELETE',
-          expires_at: futureDate,
+          expires_in_seconds: 900,
         }),
       });
 
@@ -57,10 +54,9 @@ describe('checkApproval', () => {
       expect(result.action).toBe('require_approval');
       if (result.action === 'require_approval') {
         expect(result.approval_id).toBe('approval-123');
-        expect(result.approval_context.policy_name).toBe('Production DELETE');
-        expect(result.approval_context.approval_level).toBe('edge');
-        expect(result.approval_context.expires_in_seconds).toBeGreaterThan(0);
+        expect(result.approval_context.expires_in_seconds).toBe(900);
         expect(result.agent_instruction).toContain('PENDING');
+        expect(result.agent_instruction).toContain('15 minutes');
         expect(result.agent_instruction).toContain('Do NOT proceed');
         expect(result.agent_instruction).toContain('Do NOT poll in a loop');
       }
@@ -78,11 +74,7 @@ describe('checkApproval', () => {
         json: async () => ({
           id: 'approval-456',
           status: 'approved',
-          approval_level: 'edge',
-          action_summary: 'SQL query approved',
-          policy_name: 'Production DELETE',
-          expires_at: new Date().toISOString(),
-          edge_decided_by: 'admin@company.com',
+          decided_by: 'admin@company.com',
         }),
       });
 
@@ -93,7 +85,6 @@ describe('checkApproval', () => {
       if (result.action === 'allow') {
         expect(result.agent_instruction).toContain('APPROVED');
         expect(result.agent_instruction).toContain('proceed');
-        expect(result.audit.policy_name).toBe('Production DELETE');
       }
     });
 
@@ -103,11 +94,7 @@ describe('checkApproval', () => {
         json: async () => ({
           id: 'approval-789',
           status: 'rejected',
-          approval_level: 'edge',
-          action_summary: 'SQL query rejected',
-          policy_name: 'Production DELETE',
-          expires_at: new Date().toISOString(),
-          edge_justification: 'Too risky for production',
+          justification: 'Too risky for production',
         }),
       });
 
@@ -129,10 +116,6 @@ describe('checkApproval', () => {
         json: async () => ({
           id: 'approval-790',
           status: 'rejected',
-          approval_level: 'edge',
-          action_summary: 'SQL query rejected',
-          policy_name: 'Production DELETE',
-          expires_at: new Date().toISOString(),
         }),
       });
 
@@ -150,10 +133,6 @@ describe('checkApproval', () => {
         json: async () => ({
           id: 'approval-exp',
           status: 'expired',
-          approval_level: 'edge',
-          action_summary: 'SQL query expired',
-          policy_name: 'Production DELETE',
-          expires_at: new Date(Date.now() - 60000).toISOString(),
         }),
       });
 
@@ -174,10 +153,6 @@ describe('checkApproval', () => {
         json: async () => ({
           id: 'approval-can',
           status: 'cancelled',
-          approval_level: 'edge',
-          action_summary: 'SQL query cancelled',
-          policy_name: 'Production DELETE',
-          expires_at: new Date().toISOString(),
         }),
       });
 
@@ -228,7 +203,7 @@ describe('checkApproval', () => {
       expect(callBody.decided_via).toBe('mcp');
     });
 
-    it('should submit rejected decision', async () => {
+    it('should submit rejected decision with blocked:true', async () => {
       mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
 
       const result = await checkApproval({
@@ -237,11 +212,13 @@ describe('checkApproval', () => {
         justification: 'Too risky',
       });
 
-      expect(result.blocked).toBe(false);
-      expect(result.action).toBe('allow');
-      if (result.action === 'allow') {
+      // SHRIKE-301: Rejection must return blocked:true so agents stop
+      expect(result.blocked).toBe(true);
+      expect(result.action).toBe('block');
+      if (result.action === 'block') {
         expect(result.agent_instruction).toContain('REJECTED');
         expect(result.agent_instruction).toContain('Do NOT proceed');
+        expect(result.user_message).toContain('Too risky');
       }
     });
 
@@ -319,10 +296,7 @@ describe('checkApproval', () => {
         json: async () => ({
           id: 'id/with/slashes',
           status: 'pending',
-          approval_level: 'edge',
-          action_summary: 'test',
-          policy_name: 'test',
-          expires_at: new Date(Date.now() + 600000).toISOString(),
+          expires_in_seconds: 600,
         }),
       });
 
@@ -346,10 +320,7 @@ describe('checkApproval', () => {
         json: async () => ({
           id: 'approval-struct',
           status: 'pending',
-          approval_level: 'edge',
-          action_summary: 'test',
-          policy_name: 'TestPolicy',
-          expires_at: new Date(Date.now() + 600000).toISOString(),
+          expires_in_seconds: 600,
         }),
       });
 
@@ -363,39 +334,30 @@ describe('checkApproval', () => {
     });
 
     it('should compute expires_in_seconds correctly for pending', async () => {
-      const futureDate = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min from now
+      // SHRIKE-302: Backend returns precomputed expires_in_seconds
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
           id: 'approval-time',
           status: 'pending',
-          approval_level: 'edge',
-          action_summary: 'test',
-          policy_name: 'test',
-          expires_at: futureDate,
+          expires_in_seconds: 600,
         }),
       });
 
       const result = await checkApproval({ approval_id: 'approval-time' });
 
       if (result.action === 'require_approval') {
-        // Should be approximately 600 seconds (10 min), allow ±5 sec margin
-        expect(result.approval_context.expires_in_seconds).toBeGreaterThan(595);
-        expect(result.approval_context.expires_in_seconds).toBeLessThan(605);
+        expect(result.approval_context.expires_in_seconds).toBe(600);
       }
     });
 
-    it('should clamp expires_in_seconds to 0 for past dates', async () => {
-      const pastDate = new Date(Date.now() - 60000).toISOString(); // 1 min ago
+    it('should use 0 when expires_in_seconds is not provided', async () => {
+      // SHRIKE-302: When backend omits expires_in_seconds, default to 0
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
           id: 'approval-past',
           status: 'pending',
-          approval_level: 'edge',
-          action_summary: 'test',
-          policy_name: 'test',
-          expires_at: pastDate,
         }),
       });
 
