@@ -9,7 +9,7 @@
  * Returns sanitized response that protects Shrike's IP while providing actionable guidance.
  */
 
-import { config, getAuthHeaders } from '../config.js';
+import { config, getAuthHeaders, getSessionId, getAgentId } from '../config.js';
 import {
   generateRequestId,
   sanitizeFileWriteResult,
@@ -211,6 +211,11 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       body: JSON.stringify({
         content: input.path,
         content_type: 'file_path',
+        context: {
+          session_id: getSessionId(),
+          agent_id: getAgentId(),
+          source_application: 'shrike-mcp',
+        },
       }),
       signal: controller.signal,
     });
@@ -250,6 +255,9 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
         content_type: 'file_content',
         context: {
           content: input.content,  // Backend expects "content" key, not "file_content"
+          session_id: getSessionId(),
+          agent_id: getAgentId(),
+          source_application: 'shrike-mcp',
         },
       }),
       signal: controller.signal,

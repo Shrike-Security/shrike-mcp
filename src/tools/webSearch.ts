@@ -9,7 +9,7 @@
  * Returns sanitized response that protects Shrike's IP while providing actionable guidance.
  */
 
-import { config, getAuthHeaders } from '../config.js';
+import { config, getAuthHeaders, getSessionId, getAgentId } from '../config.js';
 import {
   generateRequestId,
   sanitizeWebSearchResult,
@@ -182,6 +182,11 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
         content_type: 'web_search',
         // Pass target domains to backend for server-side validation
         metadata: input.targetDomains?.length ? { target_domains: input.targetDomains } : undefined,
+        context: {
+          session_id: getSessionId(),
+          agent_id: getAgentId(),
+          source_application: 'shrike-mcp',
+        },
       }),
       signal: controller.signal,
     });

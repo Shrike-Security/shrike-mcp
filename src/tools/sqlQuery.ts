@@ -9,7 +9,7 @@
  * Returns sanitized response that protects Shrike's IP while providing actionable guidance.
  */
 
-import { config, getAuthHeaders } from '../config.js';
+import { config, getAuthHeaders, getSessionId, getAgentId } from '../config.js';
 import {
   generateRequestId,
   sanitizeSQLResult,
@@ -181,7 +181,12 @@ export async function scanSQLQuery(input: SQLQueryInput, customerId: string = 'a
       body: JSON.stringify({
         content: input.query,
         content_type: 'sql',
-        context: Object.keys(context).length > 0 ? context : undefined,
+        context: {
+          ...context,
+          session_id: getSessionId(),
+          agent_id: getAgentId(),
+          source_application: 'shrike-mcp',
+        },
       }),
       signal: controller.signal,
     });

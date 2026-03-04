@@ -4,6 +4,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Per-request context for HTTP transport.
@@ -125,6 +126,23 @@ export function getAuthHeaders(): Record<string, string> {
     headers['Authorization'] = `Bearer ${key}`;
   }
   return headers;
+}
+
+/**
+ * Session identity — persists for the lifetime of this MCP server process.
+ * One stdio/HTTP connection = one session, which maps to L9's SessionCache key.
+ */
+const SESSION_ID = randomUUID();
+const AGENT_ID = process.env.SHRIKE_AGENT_ID || `mcp-${randomUUID().slice(0, 8)}`;
+
+/** Returns the stable session ID for this MCP server process. */
+export function getSessionId(): string {
+  return SESSION_ID;
+}
+
+/** Returns the agent ID (from SHRIKE_AGENT_ID env or auto-generated). */
+export function getAgentId(): string {
+  return AGENT_ID;
 }
 
 /** All valid tool names that can be used with SHRIKE_TOOLS */

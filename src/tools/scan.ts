@@ -4,7 +4,7 @@
  * Returns sanitized response that protects Shrike's IP while providing actionable guidance
  */
 
-import { config, getAuthHeaders } from '../config.js';
+import { config, getAuthHeaders, getSessionId, getAgentId } from '../config.js';
 import { keyRotationManager } from '../index.js';
 import {
   generateRequestId,
@@ -424,6 +424,11 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
           prompt: promptForBackend,
           conversation_history: contextForBackend,
           scan_type: 'full',
+          context: {
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-mcp',
+          },
         }),
       },
       config.scanTimeoutMs

@@ -12,7 +12,7 @@
  * Requires both the original prompt and the LLM response for full analysis.
  */
 
-import { config, getAuthHeaders } from '../config.js';
+import { config, getAuthHeaders, getSessionId, getAgentId } from '../config.js';
 import {
   generateRequestId,
   sanitizeScanResult,
@@ -193,6 +193,11 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
           prompt: promptToScan,
           response: responseToScan,
           scan_type: 'full',
+          context: {
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-mcp',
+          },
         }),
       },
       config.scanTimeoutMs
