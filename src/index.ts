@@ -41,6 +41,8 @@ import { scanFileWrite, scanFileWriteTool } from './tools/fileWrite.js';
 import { scanResponse, scanResponseTool } from './tools/scanResponse.js';
 import { checkApproval, checkApprovalTool } from './tools/checkApproval.js';
 import { resetSession, resetSessionTool } from './tools/sessionReset.js';
+import { scanA2AMessage, scanA2AMessageTool } from './tools/a2aMessage.js';
+import { scanAgentCard, scanAgentCardTool } from './tools/agentCard.js';
 import { syncPIIPatterns } from './utils/piiSync.js';
 import { createKeyProvider } from './keyProvider.js';
 import { KeyRotationManager } from './keyRotation.js';
@@ -154,6 +156,14 @@ const TOOL_REGISTRY: Record<string, {
     definition: resetSessionTool,
     handler: (a, _c) => resetSession(a),
   },
+  scan_a2a_message: {
+    definition: scanA2AMessageTool,
+    handler: (a, c) => scanA2AMessage(a, c),
+  },
+  scan_agent_card: {
+    definition: scanAgentCardTool,
+    handler: (a, c) => scanAgentCard(a, c),
+  },
 };
 
 /**
@@ -178,7 +188,7 @@ const BUNDLED_TOOL_DEFINITION = {
     properties: {
       type: {
         type: 'string',
-        enum: ['prompt', 'response', 'sql_query', 'command', 'file_write', 'web_search', 'report_bypass', 'threat_intel', 'check_approval', 'session_reset'],
+        enum: ['prompt', 'response', 'sql_query', 'command', 'file_write', 'web_search', 'report_bypass', 'threat_intel', 'check_approval', 'session_reset', 'a2a_message', 'agent_card'],
         description: 'Scan type to perform',
       },
       input: {
@@ -210,6 +220,8 @@ const BUNDLED_TYPE_MAP: Record<string, string> = {
   threat_intel: 'get_threat_intel',
   check_approval: 'check_approval',
   session_reset: 'reset_session',
+  a2a_message: 'scan_a2a_message',
+  agent_card: 'scan_agent_card',
 };
 
 /**
@@ -264,7 +276,13 @@ function validateToolArgs(name: string, args: Record<string, unknown> | undefine
     case 'check_approval':
       if (!args?.approval_id) throw new McpError(ErrorCode.InvalidParams, 'approval_id is required');
       break;
-    // get_threat_intel has no required params
+    case 'scan_a2a_message':
+      if (!args?.message) throw new McpError(ErrorCode.InvalidParams, 'message is required');
+      break;
+    case 'scan_agent_card':
+      if (!args?.agent_card) throw new McpError(ErrorCode.InvalidParams, 'agent_card is required');
+      break;
+    // get_threat_intel and reset_session have no required params
   }
 }
 
