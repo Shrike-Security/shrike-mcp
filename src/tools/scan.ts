@@ -253,6 +253,16 @@ export interface ScanResult {
     policy_name: string;
     expires_in_seconds: number;
   };
+  /** SHRIKE-501: L9 session risk score (0.0-1.0) */
+  sessionRiskScore?: number;
+  /** SHRIKE-501: L9 matched correlation patterns */
+  correlationPatterns?: Array<{
+    pattern_id: string;
+    pattern_name: string;
+    category: string;
+    confidence: number;
+    description: string;
+  }>;
 }
 
 /**
@@ -303,6 +313,15 @@ export interface BackendResponse {
     risk_factors?: string[];
     original_action?: string;
   };
+  // SHRIKE-501: L9 session correlation data
+  session_risk_score?: number;
+  correlation_patterns?: Array<{
+    pattern_id: string;
+    pattern_name: string;
+    category: string;
+    confidence: number;
+    description: string;
+  }>;
 }
 
 /**
@@ -556,6 +575,9 @@ function transformBackendResponse(data: BackendResponse, scanTimeMs: number): Sc
       scanType: 'full',
     },
     approvalInfo: data.approval_info,
+    // SHRIKE-501: L9 session correlation data
+    sessionRiskScore: data.session_risk_score,
+    correlationPatterns: data.correlation_patterns,
   };
 }
 

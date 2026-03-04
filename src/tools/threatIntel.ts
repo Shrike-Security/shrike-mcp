@@ -44,6 +44,14 @@ export interface CategoryCoverage {
   description: string;
 }
 
+export interface SessionCorrelationStats {
+  activeSessions: number;
+  totalTurnsTracked: number;
+  highRiskSessions: number;
+  avgSessionRisk: number;
+  patternHitCounts: Record<string, number>;
+}
+
 export interface ThreatIntelResult {
   success: boolean;
   serverVersion: string;
@@ -53,6 +61,7 @@ export interface ThreatIntelResult {
   lastUpdated?: string;
   stats?: ThreatIntelStats;
   coverage?: CategoryCoverage[];
+  sessionStats?: SessionCorrelationStats;
   error?: string;
 }
 
@@ -113,6 +122,37 @@ export async function getThreatIntel(input: ThreatIntelInput): Promise<ThreatInt
       }>;
     };
 
+    // SHRIKE-501: Fetch session correlation stats in parallel
+    let sessionStats: SessionCorrelationStats | undefined;
+    try {
+      const sessionResponse = await fetch(
+        `${config.backendUrl}/api/threatsense/session-stats`,
+        {
+          method: 'GET',
+          headers: getAuthHeaders(),
+        }
+      );
+      if (sessionResponse.ok) {
+        const sessionData = await sessionResponse.json() as {
+          active_sessions: number;
+          total_turns_tracked: number;
+          high_risk_sessions: number;
+          avg_session_risk_score: number;
+          pattern_hit_counts: Record<string, number>;
+        };
+        sessionStats = {
+          activeSessions: sessionData.active_sessions,
+          totalTurnsTracked: sessionData.total_turns_tracked,
+          highRiskSessions: sessionData.high_risk_sessions,
+          avgSessionRisk: sessionData.avg_session_risk_score,
+          patternHitCounts: sessionData.pattern_hit_counts || {},
+        };
+      }
+    } catch {
+      // Session stats are non-critical — continue without them
+      console.error('Failed to fetch session correlation stats (non-critical)');
+    }
+
     return {
       success: true,
       serverVersion: VERSION,
@@ -141,6 +181,7 @@ export async function getThreatIntel(input: ThreatIntelInput): Promise<ThreatInt
         patternCount: c.pattern_count,
         description: c.description,
       })),
+      sessionStats,
     };
   } catch (error) {
     console.error(`Get threat intel failed: ${error instanceof Error ? error.message : 'Unknown error'}`);

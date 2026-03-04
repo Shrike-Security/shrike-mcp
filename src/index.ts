@@ -6,7 +6,7 @@
  *
  * Tool Selection Modes:
  *   Mode A (Selective): SHRIKE_TOOLS=scan_prompt,scan_sql_query (env) or X-Shrike-Tools header (HTTP)
- *   Mode B (All):       Default — all 9 tools register. Backwards compatible.
+ *   Mode B (All):       Default — all 10 tools register. Backwards compatible.
  *   Mode C (Bundled):   SHRIKE_MODE=bundled — single shrike_scan tool. Minimum context footprint.
  */
 
@@ -40,6 +40,7 @@ import { scanCommand, scanCommandTool } from './tools/command.js';
 import { scanFileWrite, scanFileWriteTool } from './tools/fileWrite.js';
 import { scanResponse, scanResponseTool } from './tools/scanResponse.js';
 import { checkApproval, checkApprovalTool } from './tools/checkApproval.js';
+import { resetSession, resetSessionTool } from './tools/sessionReset.js';
 import { syncPIIPatterns } from './utils/piiSync.js';
 import { createKeyProvider } from './keyProvider.js';
 import { KeyRotationManager } from './keyRotation.js';
@@ -67,7 +68,7 @@ Usage:
 Environment Variables:
   SHRIKE_API_KEY               API key for authenticated scans (enables LLM layers)
   SHRIKE_BACKEND_URL           Backend API URL (default: https://api.shrikesecurity.com/agent)
-  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 9)
+  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 10)
   SHRIKE_MODE                  Tool mode: bundled (single shrike_scan tool) or omit for normal
   MCP_TRANSPORT                Transport mode: stdio (default) or http
   MCP_PORT                     HTTP server port (default: 8000, used in http mode)
@@ -86,7 +87,7 @@ HTTP Endpoints (when MCP_TRANSPORT=http):
 
 Tools: scan_prompt, scan_response, scan_sql_query, scan_command,
        scan_file_write, scan_web_search, report_bypass, get_threat_intel,
-       check_approval
+       check_approval, reset_session
 
 Docs: https://github.com/Shrike-Security/shrike-mcp`);
   process.exit(0);
@@ -149,6 +150,10 @@ const TOOL_REGISTRY: Record<string, {
     definition: checkApprovalTool,
     handler: (a, c) => checkApproval(a, c),
   },
+  reset_session: {
+    definition: resetSessionTool,
+    handler: (a, _c) => resetSession(a),
+  },
 };
 
 /**
@@ -166,13 +171,14 @@ const BUNDLED_TOOL_DEFINITION = {
 - web_search: Check search queries for SSRF/PII
 - report_bypass: Report missed threats for community defense
 - threat_intel: Get latest threat patterns
-- check_approval: Check or decide on pending human approvals`,
+- check_approval: Check or decide on pending human approvals
+- session_reset: Reset session correlation state (clear multi-turn tracking)`,
   inputSchema: {
     type: 'object' as const,
     properties: {
       type: {
         type: 'string',
-        enum: ['prompt', 'response', 'sql_query', 'command', 'file_write', 'web_search', 'report_bypass', 'threat_intel', 'check_approval'],
+        enum: ['prompt', 'response', 'sql_query', 'command', 'file_write', 'web_search', 'report_bypass', 'threat_intel', 'check_approval', 'session_reset'],
         description: 'Scan type to perform',
       },
       input: {
@@ -203,6 +209,7 @@ const BUNDLED_TYPE_MAP: Record<string, string> = {
   report_bypass: 'report_bypass',
   threat_intel: 'get_threat_intel',
   check_approval: 'check_approval',
+  session_reset: 'reset_session',
 };
 
 /**
@@ -569,7 +576,7 @@ async function startStdio(): Promise<void> {
 
   const toolCount = config.mode === 'bundled'
     ? '1 (bundled)'
-    : (config.enabledTools ? `${resolveEnabledTools(config.enabledTools).length} (selective)` : '9');
+    : (config.enabledTools ? `${resolveEnabledTools(config.enabledTools).length} (selective)` : '10');
   console.error(`Shrike MCP Server running on stdio transport (${toolCount} tools)`);
 }
 

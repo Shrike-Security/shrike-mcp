@@ -46,6 +46,17 @@ export type ConfidenceBucket = 'high' | 'medium' | 'low';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 
 /**
+ * Correlation pattern detail from L9 session-aware correlation engine
+ */
+export interface CorrelationPattern {
+  pattern_id: string;
+  pattern_name: string;
+  category: string;
+  confidence: number;
+  description: string;
+}
+
+/**
  * Audit block for compliance-ready responses
  */
 export interface AuditBlock {
@@ -53,6 +64,8 @@ export interface AuditBlock {
   timestamp: string;
   policy_name?: string;
   framework_references?: string[];
+  session_risk_score?: number;
+  correlation_patterns?: CorrelationPattern[];
 }
 
 /**
@@ -564,6 +577,9 @@ interface InternalScanResult {
     risk_factors?: string[];
     original_action?: string;
   };
+  // SHRIKE-501: L9 session correlation data
+  sessionRiskScore?: number;
+  correlationPatterns?: CorrelationPattern[];
 }
 
 /**
@@ -674,14 +690,18 @@ export function sanitizeScanResult(
   // Safe results get minimal response
   // Note: PII redaction returns safe=true with recommendedAction='redact' — this is NOT a block
   if (result.safe && (result.recommendedAction === 'allow' || result.recommendedAction === 'redact')) {
+    const audit: AuditBlock = {
+      scan_id: requestId,
+      timestamp: new Date().toISOString(),
+    };
+    // SHRIKE-501: Include L9 session correlation data when present
+    if (result.sessionRiskScore != null) audit.session_risk_score = result.sessionRiskScore;
+    if (result.correlationPatterns?.length) audit.correlation_patterns = result.correlationPatterns;
     return {
       blocked: false,
       action: 'allow',
       agent_instruction: AGENT_INSTRUCTION_ALLOWED,
-      audit: {
-        scan_id: requestId,
-        timestamp: new Date().toISOString(),
-      },
+      audit,
       request_id: requestId,
     };
   }
@@ -694,6 +714,16 @@ export function sanitizeScanResult(
   );
   const confidence = bucketConfidence(result.confidence);
 
+  const blockedAudit: AuditBlock = {
+    scan_id: requestId,
+    timestamp: new Date().toISOString(),
+    policy_name: primaryViolation?.policyName || 'Security Policy',
+    framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
+  };
+  // SHRIKE-501: Include L9 session correlation data when present
+  if (result.sessionRiskScore != null) blockedAudit.session_risk_score = result.sessionRiskScore;
+  if (result.correlationPatterns?.length) blockedAudit.correlation_patterns = result.correlationPatterns;
+
   return {
     blocked: true,
     action: 'block',
@@ -704,12 +734,7 @@ export function sanitizeScanResult(
     guidance: getGuidance(threatType),
     agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_prompt'],
     user_message: USER_MESSAGES[threatType],
-    audit: {
-      scan_id: requestId,
-      timestamp: new Date().toISOString(),
-      policy_name: primaryViolation?.policyName || 'Security Policy',
-      framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
-    },
+    audit: blockedAudit,
     request_id: requestId,
   };
 }
