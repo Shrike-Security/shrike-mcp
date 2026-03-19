@@ -8,7 +8,9 @@
  * to the original SHRIKE_API_KEY env var approach.
  */
 
-import { readFile } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { homedir } from 'os';
+import { join } from 'path';
 
 // ---------------------------------------------------------------------------
 // Interface
@@ -24,12 +26,45 @@ export interface KeyProvider {
 }
 
 // ---------------------------------------------------------------------------
-// EnvKeyProvider — default, wraps process.env.SHRIKE_API_KEY
+// Credentials file path: ~/.shrike/credentials
+// ---------------------------------------------------------------------------
+
+const CREDENTIALS_DIR = join(homedir(), '.shrike');
+const CREDENTIALS_FILE = join(CREDENTIALS_DIR, 'credentials');
+
+/**
+ * Reads a saved API key from ~/.shrike/credentials.
+ * File format: JSON with { "api_key": "sk_cust_..." }
+ */
+async function readCredentialsFile(): Promise<string | null> {
+  try {
+    const content = await readFile(CREDENTIALS_FILE, 'utf-8');
+    const parsed = JSON.parse(content) as { api_key?: string };
+    return parsed.api_key?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Saves an API key to ~/.shrike/credentials with 0600 permissions.
+ */
+export async function saveCredentials(apiKey: string): Promise<void> {
+  await mkdir(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
+  const content = JSON.stringify({ api_key: apiKey }, null, 2) + '\n';
+  await writeFile(CREDENTIALS_FILE, content, { mode: 0o600 });
+}
+
+// ---------------------------------------------------------------------------
+// EnvKeyProvider — default, checks SHRIKE_API_KEY env then ~/.shrike/credentials
 // ---------------------------------------------------------------------------
 
 export class EnvKeyProvider implements KeyProvider {
   async getKey(): Promise<string | null> {
-    return process.env.SHRIKE_API_KEY || null;
+    // Priority: env var > credentials file
+    const envKey = process.env.SHRIKE_API_KEY || null;
+    if (envKey) return envKey;
+    return readCredentialsFile();
   }
   name(): string {
     return 'env';

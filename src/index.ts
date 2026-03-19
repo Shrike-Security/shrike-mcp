@@ -53,17 +53,24 @@ const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
 const VERSION: string = pkg.version;
 
-// Handle --version and --help before starting the server
+// Handle --version, --help, and --signup before starting the server
 const args = process.argv.slice(2);
 if (args.includes('--version') || args.includes('-v')) {
   console.log(`shrike-mcp ${VERSION}`);
   process.exit(0);
 }
-if (args.includes('--help') || args.includes('-h')) {
+if (args.includes('--signup')) {
+  // Interactive signup — runs outside MCP protocol, uses terminal I/O directly
+  import('./signup.js').then(m => m.runSignup()).catch(err => {
+    console.error(`Signup failed: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  });
+} else if (args.includes('--help') || args.includes('-h')) {
   console.log(`shrike-mcp ${VERSION} — AI agent security scanning via MCP
 
 Usage:
   npx shrike-mcp              Start MCP server (stdio transport)
+  npx shrike-mcp --signup      Create a free account and save API key
   shrike-mcp --version         Print version
   shrike-mcp --help            Show this help
 
@@ -568,7 +575,9 @@ async function authenticate(): Promise<void> {
     currentCustomerId = authResult.customerId || 'default';
     console.error(`Authenticated as customer: ${currentCustomerId} (${authResult.tier})`);
   } else {
-    console.error(`No API key available (provider: ${provider.name()}), running without authentication`);
+    console.error(`No API key found (checked: SHRIKE_API_KEY env, ~/.shrike/credentials)`);
+    console.error('  Running without authentication (free tier — L1-L5 regex only)');
+    console.error('  To get a free API key: npx shrike-mcp --signup');
     if (config.transport === 'http') {
       console.error('  HTTP mode: clients can authenticate via Authorization header per-request');
     }
