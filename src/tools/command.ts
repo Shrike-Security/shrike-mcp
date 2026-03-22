@@ -17,6 +17,7 @@ import {
   extractSpecializedInternalDetails,
   type SanitizedResponse,
 } from '../utils/responseFormatter.js';
+import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
 export interface CommandInput {
   command: string;
@@ -176,21 +177,24 @@ export async function scanCommand(input: CommandInput, customerId: string = 'ano
     }
 
     // Call backend specialized scan endpoint
-    const response = await fetch(`${config.backendUrl}/api/scan/specialized`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        content: input.command,
-        content_type: 'command',
-        context: {
-          ...context,
-          session_id: getSessionId(),
-          agent_id: getAgentId(),
-          source_application: 'shrike-mcp',
-        },
-      }),
-      signal: controller.signal,
-    });
+    // Circuit breaker wraps the HTTP call — rejects immediately when backend is down.
+    const response = await scanCircuitBreaker.execute(() =>
+      fetch(`${config.backendUrl}/api/scan/specialized`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          content: input.command,
+          content_type: 'command',
+          context: {
+            ...context,
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-mcp',
+          },
+        }),
+        signal: controller.signal,
+      })
+    );
 
     clearTimeout(timeoutId);
 
@@ -246,7 +250,10 @@ export async function scanCommand(input: CommandInput, customerId: string = 'ano
     clearTimeout(timeoutId);
 
     let internalResult: CommandResult;
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (error instanceof CircuitOpenError) {
+      console.error(`[command] ${requestId} circuit breaker OPEN — blocking (fail-closed)`);
+      internalResult = createFailClosedResponse(Date.now() - startTime, 'Security service unavailable (circuit breaker open)', commandLength);
+    } else if (error instanceof Error && error.name === 'AbortError') {
       console.warn(`Command scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', commandLength);
     } else {

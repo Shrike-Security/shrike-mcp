@@ -18,6 +18,7 @@ import {
   getRedactionSummary,
   type RedactionEntry,
 } from '../utils/piiRedactor.js';
+import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
 /**
  * Phase 8b: Client-side size limits to fail fast before network round-trip.
@@ -433,24 +434,27 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
   }
 
   try {
-    // Use fetchWithRetry for cold-start resilience
-    const response = await fetchWithRetry(
-      `${config.backendUrl}/scan`,
-      {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          prompt: promptForBackend,
-          conversation_history: contextForBackend,
-          scan_type: 'full',
-          context: {
-            session_id: getSessionId(),
-            agent_id: getAgentId(),
-            source_application: 'shrike-mcp',
-          },
-        }),
-      },
-      config.scanTimeoutMs
+    // Circuit breaker wraps fetchWithRetry — if all retries fail, CB records a failure.
+    // After failureThreshold consecutive failures, CB opens and rejects immediately.
+    const response = await scanCircuitBreaker.execute(() =>
+      fetchWithRetry(
+        `${config.backendUrl}/scan`,
+        {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            prompt: promptForBackend,
+            conversation_history: contextForBackend,
+            scan_type: 'full',
+            context: {
+              session_id: getSessionId(),
+              agent_id: getAgentId(),
+              source_application: 'shrike-mcp',
+            },
+          }),
+        },
+        config.scanTimeoutMs
+      )
     );
 
     if (!response.ok) {
@@ -479,7 +483,10 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
     let internalResult: ScanResult;
     let errorMessage = 'Scan error';
 
-    if (error instanceof Error) {
+    if (error instanceof CircuitOpenError) {
+      console.error(`[scan] ${requestId} circuit breaker OPEN — blocking (fail-closed)`);
+      errorMessage = 'Security service unavailable (circuit breaker open)';
+    } else if (error instanceof Error) {
       if (error.name === 'AbortError') {
         console.warn(`Scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
         errorMessage = 'Analysis timeout';

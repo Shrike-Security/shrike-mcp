@@ -17,6 +17,7 @@ import {
   extractSpecializedInternalDetails,
   type SanitizedResponse,
 } from '../utils/responseFormatter.js';
+import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
 export interface SQLQueryInput {
   query: string;
@@ -175,21 +176,24 @@ export async function scanSQLQuery(input: SQLQueryInput, customerId: string = 'a
     }
 
     // Call backend specialized scan endpoint (note: /api prefix required)
-    const response = await fetch(`${config.backendUrl}/api/scan/specialized`, {
-      method: 'POST',
-      headers: getAuthHeaders(),  // Includes Authorization header if API key is set
-      body: JSON.stringify({
-        content: input.query,
-        content_type: 'sql',
-        context: {
-          ...context,
-          session_id: getSessionId(),
-          agent_id: getAgentId(),
-          source_application: 'shrike-mcp',
-        },
-      }),
-      signal: controller.signal,
-    });
+    // Circuit breaker wraps the HTTP call — rejects immediately when backend is down.
+    const response = await scanCircuitBreaker.execute(() =>
+      fetch(`${config.backendUrl}/api/scan/specialized`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          content: input.query,
+          content_type: 'sql',
+          context: {
+            ...context,
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-mcp',
+          },
+        }),
+        signal: controller.signal,
+      })
+    );
 
     clearTimeout(timeoutId);
 
@@ -245,7 +249,10 @@ export async function scanSQLQuery(input: SQLQueryInput, customerId: string = 'a
     clearTimeout(timeoutId);
 
     let internalResult: SQLQueryResult;
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (error instanceof CircuitOpenError) {
+      console.error(`[sql] ${requestId} circuit breaker OPEN — blocking (fail-closed)`);
+      internalResult = createFailClosedResponse(Date.now() - startTime, 'Security service unavailable (circuit breaker open)', queryLength, statementType);
+    } else if (error instanceof Error && error.name === 'AbortError') {
       console.warn(`SQL scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', queryLength, statementType);
     } else {

@@ -17,6 +17,7 @@ import {
   extractSpecializedInternalDetails,
   type SanitizedResponse,
 } from '../utils/responseFormatter.js';
+import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
 export interface WebSearchInput {
   query: string;
@@ -174,22 +175,23 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
   try {
     // Call backend specialized scan endpoint for web search
     // Pass targetDomains so backend can validate them too
-    const response = await fetch(`${config.backendUrl}/api/scan/specialized`, {
-      method: 'POST',
-      headers: getAuthHeaders(),  // Includes Authorization header if API key is set
-      body: JSON.stringify({
-        content: input.query,
-        content_type: 'web_search',
-        // Pass target domains to backend for server-side validation
-        metadata: input.targetDomains?.length ? { target_domains: input.targetDomains } : undefined,
-        context: {
-          session_id: getSessionId(),
-          agent_id: getAgentId(),
-          source_application: 'shrike-mcp',
-        },
-      }),
-      signal: controller.signal,
-    });
+    const response = await scanCircuitBreaker.execute(() =>
+      fetch(`${config.backendUrl}/api/scan/specialized`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          content: input.query,
+          content_type: 'web_search',
+          metadata: input.targetDomains?.length ? { target_domains: input.targetDomains } : undefined,
+          context: {
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-mcp',
+          },
+        }),
+        signal: controller.signal,
+      })
+    );
 
     clearTimeout(timeoutId);
 
@@ -305,7 +307,10 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
     clearTimeout(timeoutId);
 
     let internalResult: WebSearchResult;
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (error instanceof CircuitOpenError) {
+      console.error(`[web] ${requestId} circuit breaker OPEN — blocking (fail-closed)`);
+      internalResult = createFailClosedResponse(Date.now() - startTime, 'Security service unavailable (circuit breaker open)', input.query.length, domainsChecked);
+    } else if (error instanceof Error && error.name === 'AbortError') {
       console.warn(`Web search scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', input.query.length, domainsChecked);
     } else {

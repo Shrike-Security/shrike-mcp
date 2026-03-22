@@ -14,6 +14,7 @@ import {
   extractSpecializedInternalDetails,
   type SanitizedResponse,
 } from '../utils/responseFormatter.js';
+import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
 export interface A2AMessageInput {
   message: string;
@@ -125,16 +126,18 @@ export async function scanA2AMessage(input: A2AMessageInput, customerId: string 
     if (input.task_id) context.task_id = input.task_id;
     if (input.role) context.role = input.role;
 
-    const response = await fetch(`${config.backendUrl}/api/scan/specialized`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        content: input.message,
-        content_type: 'a2a_message',
-        context,
-      }),
-      signal: controller.signal,
-    });
+    const response = await scanCircuitBreaker.execute(() =>
+      fetch(`${config.backendUrl}/api/scan/specialized`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          content: input.message,
+          content_type: 'a2a_message',
+          context,
+        }),
+        signal: controller.signal,
+      })
+    );
 
     clearTimeout(timeoutId);
 
@@ -186,7 +189,10 @@ export async function scanA2AMessage(input: A2AMessageInput, customerId: string 
     clearTimeout(timeoutId);
 
     let internalResult: A2AMessageResult;
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (error instanceof CircuitOpenError) {
+      console.error(`[a2a] ${requestId} circuit breaker OPEN — blocking (fail-closed)`);
+      internalResult = createFailClosedResponse(Date.now() - startTime, 'Security service unavailable (circuit breaker open)', messageLength);
+    } else if (error instanceof Error && error.name === 'AbortError') {
       console.warn(`A2A message scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', messageLength);
     } else {

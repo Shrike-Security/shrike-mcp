@@ -17,6 +17,7 @@ import {
   extractSpecializedInternalDetails,
   type SanitizedResponse,
 } from '../utils/responseFormatter.js';
+import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
 /**
  * Phase 8b: Client-side size limits for file writes.
@@ -204,21 +205,23 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     let highestSeverity: string | undefined;
     let totalConfidence = 1.0;
 
-    // Step 1: Scan the file path
-    const pathResponse = await fetch(`${config.backendUrl}/api/scan/specialized`, {
-      method: 'POST',
-      headers: getAuthHeaders(),  // Includes Authorization header if API key is set
-      body: JSON.stringify({
-        content: input.path,
-        content_type: 'file_path',
-        context: {
-          session_id: getSessionId(),
-          agent_id: getAgentId(),
-          source_application: 'shrike-mcp',
-        },
-      }),
-      signal: controller.signal,
-    });
+    // Step 1: Scan the file path (through circuit breaker)
+    const pathResponse = await scanCircuitBreaker.execute(() =>
+      fetch(`${config.backendUrl}/api/scan/specialized`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          content: input.path,
+          content_type: 'file_path',
+          context: {
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-mcp',
+          },
+        }),
+        signal: controller.signal,
+      })
+    );
 
     if (!pathResponse.ok) {
       clearTimeout(timeoutId);
@@ -246,22 +249,24 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       });
     }
 
-    // Step 2: Scan the file content (path + content together for context)
-    const contentResponse = await fetch(`${config.backendUrl}/api/scan/specialized`, {
-      method: 'POST',
-      headers: getAuthHeaders(),  // Includes Authorization header if API key is set
-      body: JSON.stringify({
-        content: input.path,
-        content_type: 'file_content',
-        context: {
-          content: input.content,  // Backend expects "content" key, not "file_content"
-          session_id: getSessionId(),
-          agent_id: getAgentId(),
-          source_application: 'shrike-mcp',
-        },
-      }),
-      signal: controller.signal,
-    });
+    // Step 2: Scan the file content (through circuit breaker)
+    const contentResponse = await scanCircuitBreaker.execute(() =>
+      fetch(`${config.backendUrl}/api/scan/specialized`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          content: input.path,
+          content_type: 'file_content',
+          context: {
+            content: input.content,
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-mcp',
+          },
+        }),
+        signal: controller.signal,
+      })
+    );
 
     clearTimeout(timeoutId);
 
@@ -333,7 +338,10 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     clearTimeout(timeoutId);
 
     let internalResult: FileWriteResult;
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (error instanceof CircuitOpenError) {
+      console.error(`[file] ${requestId} circuit breaker OPEN — blocking (fail-closed)`);
+      internalResult = createFailClosedResponse(Date.now() - startTime, 'Security service unavailable (circuit breaker open)', pathLength, contentLength, fileExtension);
+    } else if (error instanceof Error && error.name === 'AbortError') {
       console.warn(`File scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', pathLength, contentLength, fileExtension);
     } else {

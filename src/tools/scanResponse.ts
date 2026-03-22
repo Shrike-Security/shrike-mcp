@@ -21,6 +21,7 @@ import {
   type SanitizedResponse,
 } from '../utils/responseFormatter.js';
 import { rehydratePII, type RedactionEntry } from '../utils/piiRedactor.js';
+import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 import type { ScanResult, BackendResponse } from './scan.js';
 
 /**
@@ -184,23 +185,25 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
       }
     }
 
-    const response = await fetchWithRetry(
-      `${config.backendUrl}/scan`,
-      {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          prompt: promptToScan,
-          response: responseToScan,
-          scan_type: 'full',
-          context: {
-            session_id: getSessionId(),
-            agent_id: getAgentId(),
-            source_application: 'shrike-mcp',
-          },
-        }),
-      },
-      config.scanTimeoutMs
+    const response = await scanCircuitBreaker.execute(() =>
+      fetchWithRetry(
+        `${config.backendUrl}/scan`,
+        {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            prompt: promptToScan,
+            response: responseToScan,
+            scan_type: 'full',
+            context: {
+              session_id: getSessionId(),
+              agent_id: getAgentId(),
+              source_application: 'shrike-mcp',
+            },
+          }),
+        },
+        config.scanTimeoutMs
+      )
     );
 
     if (!response.ok) {
@@ -252,7 +255,10 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
   } catch (error) {
     let errorMessage = 'Scan error';
 
-    if (error instanceof Error) {
+    if (error instanceof CircuitOpenError) {
+      console.error(`[response] ${requestId} circuit breaker OPEN — blocking (fail-closed)`);
+      errorMessage = 'Security service unavailable (circuit breaker open)';
+    } else if (error instanceof Error) {
       if (error.name === 'AbortError') {
         console.warn(`Response scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
         errorMessage = 'Analysis timeout';

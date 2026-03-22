@@ -15,6 +15,7 @@ import {
   extractSpecializedInternalDetails,
   type SanitizedResponse,
 } from '../utils/responseFormatter.js';
+import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
 export interface AgentCardInput {
   agent_card: string;
@@ -122,16 +123,18 @@ export async function scanAgentCard(input: AgentCardInput, customerId: string = 
       context.verify_signature = 'true';
     }
 
-    const response = await fetch(`${config.backendUrl}/api/scan/specialized`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        content: input.agent_card,
-        content_type: 'agent_card',
-        context,
-      }),
-      signal: controller.signal,
-    });
+    const response = await scanCircuitBreaker.execute(() =>
+      fetch(`${config.backendUrl}/api/scan/specialized`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          content: input.agent_card,
+          content_type: 'agent_card',
+          context,
+        }),
+        signal: controller.signal,
+      })
+    );
 
     clearTimeout(timeoutId);
 
@@ -183,7 +186,10 @@ export async function scanAgentCard(input: AgentCardInput, customerId: string = 
     clearTimeout(timeoutId);
 
     let internalResult: AgentCardResult;
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (error instanceof CircuitOpenError) {
+      console.error(`[card] ${requestId} circuit breaker OPEN — blocking (fail-closed)`);
+      internalResult = createFailClosedResponse(Date.now() - startTime, 'Security service unavailable (circuit breaker open)', cardLength);
+    } else if (error instanceof Error && error.name === 'AbortError') {
       console.warn(`Agent card scan timed out after ${config.scanTimeoutMs}ms, BLOCKING (fail-closed)`);
       internalResult = createFailClosedResponse(Date.now() - startTime, 'Analysis timeout', cardLength);
     } else {

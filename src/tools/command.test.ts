@@ -18,6 +18,18 @@ vi.mock('../config.js', () => ({
     debug: false,
   },
   getAuthHeaders: () => ({ 'Content-Type': 'application/json', Authorization: 'Bearer test-key' }),
+  getSessionId: () => 'test-session',
+  getAgentId: () => 'test-agent',
+}));
+
+// Mock circuit breaker to pass through (no state accumulation across tests)
+vi.mock('../utils/circuitBreaker.js', () => ({
+  scanCircuitBreaker: {
+    execute: async (fn: () => Promise<unknown>) => fn(),
+  },
+  CircuitOpenError: class CircuitOpenError extends Error {
+    constructor(msg = 'Circuit breaker is open') { super(msg); this.name = 'CircuitOpenError'; }
+  },
 }));
 
 // Suppress console.error in tests
@@ -62,6 +74,11 @@ describe('scanCommand', () => {
         body: JSON.stringify({
           content: 'ls -la',
           content_type: 'command',
+          context: {
+            session_id: 'test-session',
+            agent_id: 'test-agent',
+            source_application: 'shrike-mcp',
+          },
         }),
       }),
     );
@@ -138,6 +155,9 @@ describe('scanCommand', () => {
             shell: 'bash',
             working_directory: '/app',
             execution_context: 'production',
+            session_id: 'test-session',
+            agent_id: 'test-agent',
+            source_application: 'shrike-mcp',
           },
         }),
       }),
