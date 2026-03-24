@@ -105,6 +105,9 @@ Docs: https://github.com/Shrike-Security/shrike-mcp`);
 // Track connected customer for rate limiting (stdio mode)
 let currentCustomerId: string | null = null;
 
+// True when running without an API key — scan responses include a signup hint
+let unauthenticated = false;
+
 // Key rotation manager — initialized in authenticate()
 let keyRotationManager: KeyRotationManager | null = null;
 
@@ -294,6 +297,25 @@ function validateToolArgs(name: string, args: Record<string, unknown> | undefine
 }
 
 // =============================================================================
+// SIGNUP HINT
+// =============================================================================
+
+/**
+ * When running without an API key, appends a hint to scan results so the
+ * agent (or user) knows they're only getting L1-L5 regex scanning and can
+ * upgrade by running `npx shrike-mcp --signup`.
+ */
+function maybeAddSignupHint(result: any): any {
+  if (!unauthenticated || typeof result !== 'object' || result === null) {
+    return result;
+  }
+  return {
+    ...result,
+    _note: 'Running in free tier (regex-only). For LLM-powered analysis and session correlation, run: npx shrike-mcp --signup',
+  };
+}
+
+// =============================================================================
 // SERVER CREATION
 // =============================================================================
 
@@ -373,8 +395,9 @@ function createServer(options: CreateServerOptions = {}): Server {
         validateToolArgs(actualToolName, input);
         const entry = TOOL_REGISTRY[actualToolName];
         const result = await entry.handler(input, effectiveCustomerId);
+        const output = maybeAddSignupHint(result);
         return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, entry.compact ? undefined : 2) }],
+          content: [{ type: 'text', text: JSON.stringify(output, null, entry.compact ? undefined : 2) }],
         };
       }
 
@@ -394,8 +417,9 @@ function createServer(options: CreateServerOptions = {}): Server {
 
       validateToolArgs(name, args as Record<string, unknown> | undefined);
       const result = await entry.handler(args, effectiveCustomerId);
+      const output = maybeAddSignupHint(result);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, entry.compact ? undefined : 2) }],
+        content: [{ type: 'text', text: JSON.stringify(output, null, entry.compact ? undefined : 2) }],
       };
     } catch (error) {
       if (error instanceof McpError) {
@@ -577,11 +601,22 @@ async function authenticate(): Promise<void> {
   } else {
     console.error(`No API key found (checked: SHRIKE_API_KEY env, ~/.shrike/credentials)`);
     console.error('  Running without authentication (free tier — L1-L5 regex only)');
-    console.error('  To get a free API key: npx shrike-mcp --signup');
-    if (config.transport === 'http') {
+
+    // If running interactively (TTY), offer inline signup
+    if (config.transport === 'stdio' && process.stdin.isTTY) {
+      console.error('');
+      console.error('  No API key configured. Create a free account? Run:');
+      console.error('    npx shrike-mcp --signup');
+      console.error('');
+    } else if (config.transport === 'http') {
       console.error('  HTTP mode: clients can authenticate via Authorization header per-request');
+    } else {
+      // Agent-driven stdio: log the hint so it appears in MCP server stderr
+      console.error('  To unlock full scanning (LLM analysis, session correlation):');
+      console.error('    npx shrike-mcp --signup');
     }
     currentCustomerId = 'anonymous';
+    unauthenticated = true;
   }
 }
 
