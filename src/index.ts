@@ -668,7 +668,10 @@ async function startStdio(): Promise<void> {
  */
 async function startHttp(): Promise<void> {
   const httpServer = createHttpServer(async (req, res) => {
-    const url = req.url || '/';
+    const rawUrl = req.url || '/';
+    // Strip /mcp prefix from load balancer routing (api.shrikesecurity.com/mcp/...)
+    // but preserve /mcp itself (that's the MCP endpoint)
+    const url = rawUrl.startsWith('/mcp/') ? rawUrl.slice(4) : rawUrl;
     const method = req.method || 'GET';
 
     // Health check — ALB, Cloud Run, AgentCore probes
