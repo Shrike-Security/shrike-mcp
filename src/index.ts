@@ -689,8 +689,8 @@ async function startHttp(): Promise<void> {
       return;
     }
 
-    // Agent card — AgentCore discovery
-    if (url === '/.well-known/agent-card.json') {
+    // Agent card — AgentCore discovery + Smithery server card
+    if (url === '/.well-known/agent-card.json' || url === '/.well-known/mcp/server-card.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(getAgentCard()));
       return;
