@@ -14,9 +14,11 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createServer as createHttpServer } from 'http';
+import express from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -30,6 +32,7 @@ import {
 
 import { config, logConfig, requestContext, VALID_TOOL_NAMES, type RequestContext } from './config.js';
 import { validateApiKey, extractApiKey } from './auth.js';
+import { ShrikeOAuthProvider, isApiKey } from './oauth/provider.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { scanPrompt, scanPromptTool } from './tools/scan.js';
 import { reportBypass, reportBypassTool } from './tools/reportBypass.js';
@@ -182,17 +185,21 @@ const TOOL_REGISTRY: Record<string, {
  */
 const BUNDLED_TOOL_DEFINITION = {
   name: 'shrike_scan',
-  description: `Unified security scanner. Set 'type' to choose scan:
-- prompt: Scan prompts for injection, PII, toxicity
-- response: Scan LLM responses for data leaks
-- sql_query: Detect SQL injection in queries
-- command: Scan CLI commands for exfiltration, RCE, destructive ops
-- file_write: Validate file writes for traversal/secrets
-- web_search: Check search queries for SSRF/PII
-- report_bypass: Report missed threats for community defense
-- threat_intel: Get latest threat patterns
-- check_approval: Check or decide on pending human approvals
-- session_reset: Reset session correlation state (clear multi-turn tracking)`,
+  description: `Action governance for AI agents — protective checks before execution. Use this to verify tool calls, SQL queries, file writes, shell commands, web searches, and inter-agent messages are safe before you act. Returns a clear allow / approve / block signal so you don't end up responsible for damage from injection, jailbreak, or accidental destructive operations.
+
+Set 'type' to choose check:
+- prompt: Check inbound content for injection, PII, toxicity before you act on it
+- response: Check LLM responses for data leaks before delivery
+- sql_query: Check SQL queries for injection or destructive ops before execution
+- command: Check CLI commands for exfiltration, RCE, destructive ops before execution
+- file_write: Check file writes for path traversal, secrets, or sensitive paths
+- web_search: Check search queries for PII leaks or suspicious targets
+- a2a_message: Check incoming agent messages for injection or social engineering
+- agent_card: Check remote agent metadata for spoofing before you trust it
+- report_bypass: Report a missed threat so future you (and other agents) get better protection
+- threat_intel: Look up current threat patterns for your context
+- check_approval: Check status of approvals, or submit a decision after the user explicitly says so
+- session_reset: Reset multi-turn tracking when starting a new logical task`,
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -441,7 +448,7 @@ function createServer(options: CreateServerOptions = {}): Server {
       prompts: [
         {
           name: 'security-audit',
-          description: 'Comprehensive security audit of user input — scans for prompt injection, PII, and toxicity, then returns a recommended action.',
+          description: 'Protective check on user input — verifies it is safe to act on before you do, then returns a clear allow / redact / block recommendation. Catches prompt injection, PII, and toxicity that could compromise your output.',
           arguments: [
             {
               name: 'content',
@@ -542,11 +549,17 @@ function getAgentCard(): object {
   return {
     name: 'shrike-mcp',
     version: VERSION,
-    description: 'AI agent security scanner — prompt injection detection, SQL injection, PII isolation, threat intel.',
+    description: 'Action governance for AI agents — protective checks before tool calls, SQL queries, file writes, shell commands, and inter-agent messages execute. Helps you avoid injection, jailbreak, and accidental damage.',
     url: `http://localhost:${config.port}/mcp`,
     transport: { type: 'streamable-http' },
     capabilities: { tools: true },
     tools: toolList,
+    contact: {
+      email: 'support@shrikesecurity.com',
+      url: 'https://shrikesecurity.com',
+      issues: 'https://github.com/Shrike-Security/shrike-mcp/issues',
+    },
+    privacy_policy: 'https://shrikesecurity.com/privacy',
   };
 }
 
@@ -661,16 +674,227 @@ async function startStdio(): Promise<void> {
 }
 
 /**
- * Start in HTTP mode (for Copilot, AWS AgentCore, GCP Cloud Run, Docker containers)
- * Stateless: creates a new Server + Transport per request (SDK recommended pattern)
- * Per-request auth: extracts Authorization header for each Copilot client
- * Per-request tools: extracts X-Shrike-Tools header for selective tool registration
+ * Handles a raw MCP POST request — shared between legacy and OAuth HTTP modes.
+ * Extracts per-request auth and tool selection, then creates a stateless Server+Transport.
+ */
+async function handleMcpPost(
+  req: import('http').IncomingMessage,
+  res: import('http').ServerResponse,
+  authOverride?: { apiKey: string | null; customerId: string | null },
+): Promise<void> {
+  // --- Per-request auth ---
+  let perRequestKey: string | null = null;
+  let perRequestCustomerId: string | null = null;
+
+  if (authOverride) {
+    // OAuth-authenticated request — customer resolved by mcpAuthRouter
+    perRequestKey = authOverride.apiKey;
+    perRequestCustomerId = authOverride.customerId;
+  } else {
+    // Legacy API key auth
+    const authHeader = req.headers['authorization'] as string | undefined;
+    perRequestKey = extractApiKey(authHeader);
+
+    if (perRequestKey) {
+      const authResult = await validateApiKey(perRequestKey);
+      if (authResult.valid) {
+        perRequestCustomerId = authResult.customerId || 'default';
+        if (config.debug) {
+          console.error(`[http] Per-request auth: customer=${perRequestCustomerId} tier=${authResult.tier}`);
+        }
+      } else if (!authResult.transient) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: `Authentication failed: ${authResult.error}` },
+          id: null,
+        }));
+        return;
+      }
+    }
+  }
+
+  // --- Per-request tool selection ---
+  const toolsHeader = req.headers['x-shrike-tools'] as string | undefined;
+  const perRequestTools = toolsHeader
+    ? toolsHeader.split(',').map(t => t.trim()).filter(Boolean)
+    : null;
+
+  const reqCtx: RequestContext = {
+    apiKey: perRequestKey || config.apiKey,
+    customerId: perRequestCustomerId || currentCustomerId,
+    enabledTools: perRequestTools,
+  };
+
+  await requestContext.run(reqCtx, async () => {
+    const server = createServer({
+      apiKey: reqCtx.apiKey,
+      customerId: reqCtx.customerId,
+      enabledTools: reqCtx.enabledTools,
+    });
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // Stateless — required for AgentCore
+    });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+      res.on('close', () => {
+        transport.close();
+        server.close();
+      });
+    } catch (error) {
+      console.error(`Error handling MCP request: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null,
+        }));
+      }
+    }
+  });
+}
+
+/**
+ * Start in HTTP mode with OAuth 2.0 (Anthropic Connectors Directory compliant).
+ * Uses Express with the MCP SDK's mcpAuthRouter for standards-compliant OAuth.
+ * Falls back to legacy API key auth for backwards compatibility.
+ */
+async function startHttpWithOAuth(): Promise<void> {
+  const oauthProvider = new ShrikeOAuthProvider();
+  const app = express();
+
+  // Determine issuer URL — must be HTTPS in production
+  const issuerUrl = new URL(
+    process.env['SHRIKE_OAUTH_ISSUER_URL'] || `http://localhost:${config.port}`
+  );
+
+  // Mount MCP OAuth auth router at root — installs:
+  //   /authorize, /token, /register, /revoke
+  //   /.well-known/oauth-authorization-server
+  //   /.well-known/oauth-protected-resource/mcp
+  app.use(mcpAuthRouter({
+    provider: oauthProvider,
+    issuerUrl,
+    serviceDocumentationUrl: new URL('https://shrikesecurity.com/docs'),
+    scopesSupported: ['shrike:scan', 'shrike:read'],
+  }));
+
+  // OAuth callback — backend redirects here after user authenticates via Google/GitHub
+  app.get('/oauth/callback', (req, res) => {
+    const { mcp_state, customer_id, error } = req.query as Record<string, string>;
+
+    if (error) {
+      // Decode original state to get the client's redirect_uri
+      try {
+        const state = JSON.parse(Buffer.from(mcp_state || '', 'base64url').toString());
+        const redirectUrl = new URL(state.redirectUri);
+        redirectUrl.searchParams.set('error', error);
+        if (state.state) redirectUrl.searchParams.set('state', state.state);
+        res.redirect(redirectUrl.toString());
+      } catch {
+        res.status(400).json({ error: 'Invalid OAuth callback state' });
+      }
+      return;
+    }
+
+    if (!mcp_state || !customer_id) {
+      res.status(400).json({ error: 'Missing mcp_state or customer_id' });
+      return;
+    }
+
+    try {
+      const state = JSON.parse(Buffer.from(mcp_state, 'base64url').toString());
+
+      // Create authorization code for the authenticated customer
+      const code = oauthProvider.createAuthorizationCode({
+        clientId: state.clientId,
+        customerId: customer_id,
+        codeChallenge: state.codeChallenge,
+        redirectUri: state.redirectUri,
+        scopes: state.scopes || [],
+      });
+
+      // Redirect back to the MCP client (Claude) with the authorization code
+      const redirectUrl = new URL(state.redirectUri);
+      redirectUrl.searchParams.set('code', code);
+      if (state.state) redirectUrl.searchParams.set('state', state.state);
+      res.redirect(redirectUrl.toString());
+    } catch (err) {
+      console.error(`OAuth callback error: ${err instanceof Error ? err.message : err}`);
+      res.status(400).json({ error: 'Invalid callback parameters' });
+    }
+  });
+
+  // Health check
+  app.get(['/health', '/healthz', '/ping'], (_req, res) => {
+    res.json({
+      status: 'ok',
+      version: VERSION,
+      service: 'shrike-mcp',
+      transport: 'http',
+      mode: config.mode,
+      oauth: true,
+      customer: currentCustomerId,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Agent card — AgentCore discovery
+  app.get(['/.well-known/agent-card.json', '/.well-known/mcp/server-card.json'], (_req, res) => {
+    res.json(getAgentCard());
+  });
+
+  // MCP endpoint — the SDK's auth middleware handles Bearer token validation
+  // via verifyAccessToken() in our provider (supports both OAuth JWT and API keys)
+  app.post('/mcp', async (req, res) => {
+    // If the request has an Authorization header with an API key, use legacy auth
+    const authHeader = req.headers['authorization'] as string | undefined;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+
+    if (token && isApiKey(token)) {
+      // Legacy API key — handle directly
+      await handleMcpPost(req, res);
+    } else if ((req as any).auth) {
+      // OAuth-authenticated — auth info attached by SDK middleware
+      const authInfo = (req as any).auth as import('@modelcontextprotocol/sdk/server/auth/types.js').AuthInfo;
+      await handleMcpPost(req, res, {
+        apiKey: authInfo.token,
+        customerId: (authInfo.extra?.['customerId'] as string) || null,
+      });
+    } else {
+      // No auth — allow for free tier
+      await handleMcpPost(req, res);
+    }
+  });
+
+  // GET and DELETE on /mcp — not supported in stateless mode
+  app.all('/mcp', (_req, res) => {
+    res.status(405).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed.' },
+      id: null,
+    });
+  });
+
+  app.listen(config.port, '0.0.0.0', () => {
+    console.error(`Shrike MCP Server running on http://0.0.0.0:${config.port} (OAuth enabled)`);
+    console.error(`  MCP endpoint: http://0.0.0.0:${config.port}/mcp`);
+    console.error(`  Health check: http://0.0.0.0:${config.port}/health`);
+    console.error(`  Agent card:   http://0.0.0.0:${config.port}/.well-known/agent-card.json`);
+    console.error(`  OAuth:        http://0.0.0.0:${config.port}/.well-known/oauth-authorization-server`);
+    console.error(`  Auth modes:   OAuth 2.0 + Legacy API key`);
+  });
+}
+
+/**
+ * Start in HTTP mode (legacy — raw http.createServer, no OAuth).
+ * Used when SHRIKE_OAUTH_ENABLED is not set, for backwards compatibility.
  */
 async function startHttp(): Promise<void> {
   const httpServer = createHttpServer(async (req, res) => {
     const rawUrl = req.url || '/';
-    // Strip /mcp prefix from load balancer routing (api.shrikesecurity.com/mcp/...)
-    // but preserve /mcp itself (that's the MCP endpoint)
     const url = rawUrl.startsWith('/mcp/') ? rawUrl.slice(4) : rawUrl;
     const method = req.method || 'GET';
 
@@ -699,75 +923,7 @@ async function startHttp(): Promise<void> {
     // MCP endpoint — Streamable HTTP transport
     if (url === '/mcp') {
       if (method === 'POST') {
-        // --- Per-request auth (US-035: Copilot sends Authorization: Bearer <key>) ---
-        const authHeader = req.headers['authorization'] as string | undefined;
-        const perRequestKey = extractApiKey(authHeader);
-
-        // --- Per-request tool selection (US-034: X-Shrike-Tools header) ---
-        const toolsHeader = req.headers['x-shrike-tools'] as string | undefined;
-        const perRequestTools = toolsHeader
-          ? toolsHeader.split(',').map(t => t.trim()).filter(Boolean)
-          : null;
-
-        // Resolve customer ID for the per-request key
-        let perRequestCustomerId: string | null = null;
-        if (perRequestKey) {
-          const authResult = await validateApiKey(perRequestKey);
-          if (authResult.valid) {
-            perRequestCustomerId = authResult.customerId || 'default';
-            if (config.debug) {
-              console.error(`[http] Per-request auth: customer=${perRequestCustomerId} tier=${authResult.tier}`);
-            }
-          } else if (!authResult.transient) {
-            // Permanent auth failure — reject immediately
-            res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-              jsonrpc: '2.0',
-              error: { code: -32001, message: `Authentication failed: ${authResult.error}` },
-              id: null,
-            }));
-            return;
-          }
-          // Transient failure: fall through to process-level key
-        }
-
-        // Build per-request context for AsyncLocalStorage
-        const reqCtx: RequestContext = {
-          apiKey: perRequestKey || config.apiKey,
-          customerId: perRequestCustomerId || currentCustomerId,
-          enabledTools: perRequestTools,
-        };
-
-        // Run MCP handling within AsyncLocalStorage context
-        // so getAuthHeaders() in tool handlers picks up per-request key
-        await requestContext.run(reqCtx, async () => {
-          const server = createServer({
-            apiKey: reqCtx.apiKey,
-            customerId: reqCtx.customerId,
-            enabledTools: reqCtx.enabledTools,
-          });
-          const transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: undefined, // Stateless — required for AgentCore
-          });
-          try {
-            await server.connect(transport);
-            await transport.handleRequest(req, res);
-            res.on('close', () => {
-              transport.close();
-              server.close();
-            });
-          } catch (error) {
-            console.error(`Error handling MCP request: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            if (!res.headersSent) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({
-                jsonrpc: '2.0',
-                error: { code: -32603, message: 'Internal server error' },
-                id: null,
-              }));
-            }
-          }
-        });
+        await handleMcpPost(req, res);
         return;
       }
 
@@ -851,7 +1007,12 @@ async function main(): Promise<void> {
   });
 
   if (config.transport === 'http') {
-    await startHttp();
+    const oauthEnabled = process.env['SHRIKE_OAUTH_ENABLED'] === 'true';
+    if (oauthEnabled) {
+      await startHttpWithOAuth();
+    } else {
+      await startHttp();
+    }
   } else {
     await startStdio();
   }

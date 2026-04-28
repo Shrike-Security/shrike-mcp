@@ -186,6 +186,8 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
           context: {
             session_id: getSessionId(),
             agent_id: getAgentId(),
+            parent_agent_id: (input as any).parent_agent_id || '',
+            task_chain: (input as any).task_chain || '',
             source_application: 'shrike-mcp',
           },
         }),
@@ -332,7 +334,9 @@ export async function scanWebSearch(input: WebSearchInput, customerId: string = 
  */
 export const scanWebSearchTool = {
   name: 'scan_web_search',
-  description: `Call this BEFORE executing any web search query on behalf of a user or agent.
+  description: `Protective check on web search queries — catches PII leaks or suspicious targets before queries reach external services, so internal data doesn't escape through a search bar.
+
+Call this BEFORE executing any web search query on behalf of a user or agent.
 
 DECISION LOGIC:
 - If blocked=true: do NOT execute the search. Return the user_message explaining the query was rejected.
@@ -357,6 +361,22 @@ ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOC
         type: 'array',
         items: { type: 'string' },
         description: 'Optional list of target domains to validate',
+      },
+      session_id: {
+        type: 'string',
+        description: 'Session identifier for multi-turn correlation.',
+      },
+      agent_id: {
+        type: 'string',
+        description: 'Your agent identifier for activity tracking.',
+      },
+      parent_agent_id: {
+        type: 'string',
+        description: 'Parent agent ID if you are a sub-agent (delegation chain tracking).',
+      },
+      task_chain: {
+        type: 'string',
+        description: 'Delegation path from root agent (e.g., "main→research→fetch").',
       },
     },
     required: ['query'],

@@ -1,8 +1,8 @@
 {
   "name": "shrike-mcp",
   "mcpName": "io.github.Shrike-Security/shrike-mcp",
-  "version": "3.6.1",
-  "description": "MCP server that gives AI agents 12 security tools powered by a multi-stage detection pipeline. Scans prompts, responses, SQL, file writes, and web searches for injection attacks, PII leaks, and policy violations. Session correlation engine with human-in-the-loop approval for enterprise compliance.",
+  "version": "3.7.1",
+  "description": "MCP server for action governance on AI agents — 12 tools that govern tool calls, SQL queries, file writes, shell commands, and agent-to-agent messages server-side, before execution. Allow / approve / block. Session correlation. Works with Claude Desktop, Cursor, Windsurf, and any MCP client.",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
@@ -18,20 +18,27 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "mcp",
-    "security",
-    "ai-security",
-    "llm-security",
-    "prompt-injection",
+    "action-governance",
+    "ai-agents",
+    "agent-governance",
     "agent-security",
+    "mcp",
     "model-context-protocol",
-    "adversarial-testing",
-    "pii-detection",
-    "webmcp",
-    "prompt-injection-detection"
+    "claude-desktop",
+    "cursor",
+    "windsurf",
+    "tool-call-gating",
+    "ai-governance",
+    "ai-security",
+    "prompt-injection",
+    "session-correlation"
   ],
   "license": "Apache-2.0",
-  "author": "Shrike Security",
+  "author": {
+    "name": "Shrike Security",
+    "email": "support@shrikesecurity.com",
+    "url": "https://shrikesecurity.com"
+  },
   "homepage": "https://shrikesecurity.com",
   "repository": {
     "type": "git",

@@ -198,6 +198,8 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
             context: {
               session_id: getSessionId(),
               agent_id: getAgentId(),
+              parent_agent_id: (input as any).parent_agent_id || '',
+              task_chain: (input as any).task_chain || '',
               source_application: 'shrike-mcp',
             },
           }),
@@ -397,7 +399,9 @@ function createFailClosedResponse(scanTimeMs: number, reason: string): ScanResul
  */
 export const scanResponseTool = {
   name: 'scan_response',
-  description: `Call this AFTER the LLM generates a response, BEFORE returning it to the user or downstream system.
+  description: `Protective check on outbound responses — catches system prompt leaks, unexpected PII, or topic drift before delivery, so what you ship matches what you meant.
+
+Call this AFTER the LLM generates a response, BEFORE returning it to the user or downstream system.
 
 DECISION LOGIC:
 - If blocked=true: do NOT deliver the response. Regenerate with a modified prompt or return the user_message as a safe fallback.
@@ -438,6 +442,22 @@ ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOC
           },
           required: ['token', 'original', 'type'],
         },
+      },
+      session_id: {
+        type: 'string',
+        description: 'Session identifier for multi-turn correlation.',
+      },
+      agent_id: {
+        type: 'string',
+        description: 'Your agent identifier for activity tracking.',
+      },
+      parent_agent_id: {
+        type: 'string',
+        description: 'Parent agent ID if you are a sub-agent (delegation chain tracking).',
+      },
+      task_chain: {
+        type: 'string',
+        description: 'Delegation path from root agent (e.g., "main→research→fetch").',
       },
     },
     required: ['response'],

@@ -77,6 +77,8 @@ describe('scanCommand', () => {
           context: {
             session_id: 'test-session',
             agent_id: 'test-agent',
+            parent_agent_id: '',
+            task_chain: '',
             source_application: 'shrike-mcp',
           },
         }),
@@ -117,7 +119,7 @@ describe('scanCommand', () => {
       expect(result.severity).toBe('critical');
       expect(result.confidence).toBeDefined();
       expect(result.guidance).toBeDefined();
-      expect(result.agent_instruction).toContain('Do NOT execute');
+      expect(result.agent_instruction).toContain('BLOCKED');
       expect(result.user_message).toBeDefined();
       expect(result.audit.scan_id).toMatch(/^req_/);
     }
@@ -157,6 +159,8 @@ describe('scanCommand', () => {
             execution_context: 'production',
             session_id: 'test-session',
             agent_id: 'test-agent',
+            parent_agent_id: '',
+            task_chain: '',
             source_application: 'shrike-mcp',
           },
         }),
@@ -179,7 +183,7 @@ describe('scanCommand', () => {
     expect(result.action).toBe('block');
     if (result.action === 'block') {
       expect(result.threat_type).toBeDefined();
-      expect(result.agent_instruction).toContain('Do NOT execute');
+      expect(result.agent_instruction).toContain('BLOCKED');
     }
   });
 

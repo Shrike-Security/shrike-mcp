@@ -216,6 +216,8 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
           context: {
             session_id: getSessionId(),
             agent_id: getAgentId(),
+            parent_agent_id: (input as any).parent_agent_id || '',
+            task_chain: (input as any).task_chain || '',
             source_application: 'shrike-mcp',
           },
         }),
@@ -261,6 +263,8 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
             content: input.content,
             session_id: getSessionId(),
             agent_id: getAgentId(),
+            parent_agent_id: (input as any).parent_agent_id || '',
+            task_chain: (input as any).task_chain || '',
             source_application: 'shrike-mcp',
           },
         }),
@@ -379,7 +383,9 @@ function compareSeverity(a: string | undefined, b: string | undefined): number {
  */
 export const scanFileWriteTool = {
   name: 'scan_file_write',
-  description: `Call this BEFORE writing any file to disk, storage, or output. Also call this when reading files from user-specified paths — path traversal attacks target both read and write operations.
+  description: `Protective check on file operations — catches path traversal, leaked secrets, or sensitive paths before you write, so credentials don't leak through your hand.
+
+Call this BEFORE writing any file to disk, storage, or output. Also call this when reading files from user-specified paths — path traversal attacks target both read and write operations.
 
 DECISION LOGIC:
 - If blocked=true: do NOT write the file. Return the user_message to the caller.
@@ -410,6 +416,22 @@ ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOC
         type: 'string',
         enum: ['create', 'overwrite', 'append'],
         description: 'Write mode (default: overwrite)',
+      },
+      session_id: {
+        type: 'string',
+        description: 'Session identifier for multi-turn correlation.',
+      },
+      agent_id: {
+        type: 'string',
+        description: 'Your agent identifier for activity tracking.',
+      },
+      parent_agent_id: {
+        type: 'string',
+        description: 'Parent agent ID if you are a sub-agent (delegation chain tracking).',
+      },
+      task_chain: {
+        type: 'string',
+        description: 'Delegation path from root agent (e.g., "main→research→fetch").',
       },
     },
     required: ['path', 'content'],

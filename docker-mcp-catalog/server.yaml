@@ -6,27 +6,34 @@ meta:
   tags:
     - security
     - ai-security
+    - governance
+    - risk-management
     - prompt-injection
     - llm-security
     - adversarial-testing
 about:
-  title: Shrike Security
+  title: Shrike
   description: |
-    AI agent security scanner that protects LLM-powered applications from prompt injection,
-    data exfiltration, and adversarial attacks via the Model Context Protocol.
+    AI governance for agents — evaluates every AI interaction against policy via the
+    Model Context Protocol. Multi-layered cognitive pipeline with 643 test scenarios.
 
-    7 specialized security tools:
+    12 governance tools:
     - scan_prompt: Detect prompt injection and jailbreak attempts
     - scan_response: Scan LLM outputs for data leaks and manipulation
     - scan_sql_query: Detect SQL injection in AI-generated queries
+    - scan_command: Scan CLI commands for exfiltration and RCE
     - scan_file_write: Validate file writes for path traversal and malicious content
     - scan_web_search: Check search queries for SSRF and domain abuse
+    - scan_a2a_message: Scan agent-to-agent messages for injection
+    - scan_agent_card: Validate agent discovery cards for spoofing
     - report_bypass: Report novel attack patterns for community defense
     - get_threat_intel: Retrieve latest threat patterns and detection signatures
+    - check_approval: Human-in-the-loop approval workflows
+    - reset_session: Clear multi-turn session correlation state
 
-    9-layer detection pipeline: regex → unicode normalization → malformed input →
+    Multi-layered cognitive pipeline: pattern matching → unicode normalization →
     encoding detection → token analysis → semantic analysis → visual similarity →
-    LLM analysis → response intelligence.
+    LLM reasoning → response intelligence → session correlation.
   icon: https://avatars.githubusercontent.com/u/Shrike-Security
 source:
   project: https://github.com/Shrike-Security/shrike-mcp

@@ -845,4 +845,137 @@ describe('responseFormatter', () => {
       }
     });
   });
+
+  // ===========================================================================
+  // Provider Safety Block — scan coverage degradation
+  // ===========================================================================
+
+  describe('provider safety block (scan coverage degradation)', () => {
+    const safeResultWithProviderBlock = {
+      safe: true,
+      threatLevel: 'none',
+      confidence: 0.1,
+      recommendedAction: 'allow' as const,
+      violations: [],
+      llmAnalysis: {
+        analyzed: false,
+        isMalicious: false,
+        confidence: 0,
+        threatType: '',
+        reasoning: '',
+        detectedBy: '',
+        analysisTimeMs: 150,
+        providerSafetyBlock: {
+          triggered: true,
+          reason: 'FinishReasonSafety',
+          message: 'Provider stopped generation due to safety filters',
+          source: 'candidate',
+        },
+      },
+      performance: {
+        totalScanTimeMs: 200,
+        policiesEvaluated: 5,
+        llmAnalysisUsed: true,
+        cacheHits: 0,
+      },
+    };
+
+    const safeResultNoBlock = {
+      safe: true,
+      threatLevel: 'none',
+      confidence: 0.1,
+      recommendedAction: 'allow' as const,
+      violations: [],
+      llmAnalysis: {
+        analyzed: true,
+        isMalicious: false,
+        confidence: 0.1,
+        threatType: '',
+        reasoning: 'No threats detected',
+        detectedBy: 'none',
+        analysisTimeMs: 100,
+      },
+      performance: {
+        totalScanTimeMs: 150,
+        policiesEvaluated: 5,
+        llmAnalysisUsed: true,
+        cacheHits: 0,
+      },
+    };
+
+    it('should include scan_coverage when provider safety block is triggered', () => {
+      const sanitized = sanitizeScanResult(safeResultWithProviderBlock, 'req_test_block');
+      expect(sanitized.blocked).toBe(false);
+      expect(sanitized.action).toBe('allow');
+
+      // Should have scan_coverage degradation info
+      const coverage = (sanitized as any).scan_coverage;
+      expect(coverage).toBeDefined();
+      expect(coverage.degraded).toBe(true);
+      expect(coverage.reason).toBe('llm_provider_safety_block');
+      expect(coverage.detail).toContain('FinishReasonSafety');
+      expect(coverage.detail).toContain('regex and pattern layers only');
+    });
+
+    it('should NOT include scan_coverage when no provider block', () => {
+      const sanitized = sanitizeScanResult(safeResultNoBlock, 'req_test_noblock');
+      expect(sanitized.blocked).toBe(false);
+      expect(sanitized.action).toBe('allow');
+
+      // Should NOT have scan_coverage
+      expect((sanitized as any).scan_coverage).toBeUndefined();
+    });
+
+    it('should NOT include scan_coverage when llmAnalysis is absent', () => {
+      const resultNoLLM = {
+        ...safeResultNoBlock,
+        llmAnalysis: undefined,
+      };
+      const sanitized = sanitizeScanResult(resultNoLLM, 'req_test_nollm');
+      expect((sanitized as any).scan_coverage).toBeUndefined();
+    });
+
+    it('should NOT include scan_coverage when providerSafetyBlock.triggered is false', () => {
+      const resultNotTriggered = {
+        ...safeResultWithProviderBlock,
+        llmAnalysis: {
+          ...safeResultWithProviderBlock.llmAnalysis,
+          providerSafetyBlock: {
+            triggered: false,
+            reason: '',
+            message: '',
+            source: '',
+          },
+        },
+      };
+      const sanitized = sanitizeScanResult(resultNotTriggered, 'req_test_notrig');
+      expect((sanitized as any).scan_coverage).toBeUndefined();
+    });
+
+    it('should still allow the request even when provider blocks (L1-L6 clean)', () => {
+      const sanitized = sanitizeScanResult(safeResultWithProviderBlock, 'req_test_allow');
+      // The scan is still safe — L1-L6 found nothing
+      expect(sanitized.blocked).toBe(false);
+      expect(sanitized.action).toBe('allow');
+      expect(sanitized.agent_instruction).toContain('safe');
+    });
+
+    it('scan_coverage.detail includes the provider reason', () => {
+      const blocklistResult = {
+        ...safeResultWithProviderBlock,
+        llmAnalysis: {
+          ...safeResultWithProviderBlock.llmAnalysis,
+          providerSafetyBlock: {
+            triggered: true,
+            reason: 'FinishReasonBlocklist',
+            message: 'Blocklist match',
+            source: 'candidate',
+          },
+        },
+      };
+      const sanitized = sanitizeScanResult(blocklistResult, 'req_test_bl');
+      const coverage = (sanitized as any).scan_coverage;
+      expect(coverage.detail).toContain('FinishReasonBlocklist');
+    });
+  });
 });
