@@ -26,7 +26,11 @@ jobs:
           cache: 'npm'
 
       - name: Upgrade npm (OIDC trusted publisher requires npm 11.5.1+)
-        run: npm install -g npm@latest
+        run: |
+          npm install -g npm@latest
+          which npm
+          npm --version
+          node --version
 
       - run: npm ci
 
@@ -38,4 +42,9 @@ jobs:
         if: ${{ github.event.inputs.version }}
         run: npm version ${{ github.event.inputs.version }} --no-git-tag-version
 
-      - run: npm publish --provenance --access public
+      - name: Publish to npm (OIDC)
+        run: |
+          npm --version
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ''
