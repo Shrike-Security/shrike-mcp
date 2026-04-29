@@ -42,5 +42,11 @@ jobs:
         if: ${{ github.event.inputs.version }}
         run: npm version ${{ github.event.inputs.version }} --no-git-tag-version
 
+      - name: Debug npm config
+        run: |
+          npm config list -l 2>&1 | head -40
+          echo "---ACTIONS env---"
+          env | grep -E "ACTIONS_|GITHUB_REPOSITORY|GITHUB_REF|GITHUB_WORKFLOW" | sort
+
       - name: Publish to npm (OIDC)
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --loglevel=verbose
