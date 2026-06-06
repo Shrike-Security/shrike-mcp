@@ -31,7 +31,15 @@
     "ai-governance",
     "ai-security",
     "prompt-injection",
-    "session-correlation"
+    "session-correlation",
+    "cli-security",
+    "command-scanning",
+    "shell-security",
+    "agent-to-agent",
+    "a2a-protocol",
+    "agent-card",
+    "agent-delegation",
+    "tool-call-firewall"
   ],
   "license": "Apache-2.0",
   "author": {
