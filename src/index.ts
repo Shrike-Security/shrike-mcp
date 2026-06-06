@@ -97,9 +97,9 @@ HTTP Endpoints (when MCP_TRANSPORT=http):
   GET  /health                 Health check for load balancers
   GET  /.well-known/agent-card.json  Agent discovery metadata
 
-Tools: scan_prompt, scan_response, scan_sql_query, scan_command,
-       scan_file_write, scan_web_search, report_bypass, get_threat_intel,
-       check_approval, reset_session
+Tools (12): scan_prompt, scan_response, scan_sql_query, scan_command,
+            scan_file_write, scan_web_search, scan_a2a_message, scan_agent_card,
+            report_bypass, get_threat_intel, check_approval, reset_session
 
 Docs: https://github.com/Shrike-Security/shrike-mcp`);
   process.exit(0);
