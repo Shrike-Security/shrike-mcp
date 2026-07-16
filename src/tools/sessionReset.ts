@@ -9,6 +9,8 @@ import { config, getAuthHeaders, getSessionId, getAgentId } from '../config.js';
 
 export interface SessionResetInput {
   reason?: string;
+  session_id?: string;
+  agent_id?: string;
 }
 
 export interface SessionResetResult {
@@ -22,8 +24,16 @@ export interface SessionResetResult {
  * Resets the session correlation state on the backend.
  */
 export async function resetSession(input: SessionResetInput): Promise<SessionResetResult> {
-  const sessionId = getSessionId();
-  const agentId = getAgentId();
+  const sessionId = input.session_id || getSessionId();
+  const agentId = input.agent_id || getAgentId();
+
+  // Timeout guard: without an AbortController, fetch waits indefinitely
+  // for the backend to respond. If the correlator mutex is held or the
+  // backend is stuck, MCP clients (Claude Desktop, agents) hang forever
+  // instead of surfacing an error the caller can react to. Use the same
+  // timeout budget as scan operations for consistency.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), config.scanTimeoutMs);
 
   try {
     const response = await fetch(
@@ -36,8 +46,11 @@ export async function resetSession(input: SessionResetInput): Promise<SessionRes
           agent_id: agentId,
           reason: input.reason || 'User-initiated session reset',
         }),
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       return {
@@ -61,6 +74,18 @@ export async function resetSession(input: SessionResetInput): Promise<SessionRes
         : 'Session was not found or already expired.',
     };
   } catch (error) {
+    clearTimeout(timeoutId);
+
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error(`Session reset timed out after ${config.scanTimeoutMs}ms`);
+      return {
+        success: false,
+        session_id: sessionId,
+        message: 'Session reset timed out',
+        error: 'Request timed out',
+      };
+    }
+
     console.error(`Session reset failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     return {
       success: false,
@@ -98,6 +123,14 @@ ERROR HANDLING: If this tool fails, it is non-critical. Scanning continues norma
       reason: {
         type: 'string',
         description: 'Optional reason for the reset (logged for audit purposes)',
+      },
+      session_id: {
+        type: 'string',
+        description: 'Optional session identifier to reset. Defaults to the MCP server\'s current derived session ID.',
+      },
+      agent_id: {
+        type: 'string',
+        description: 'Optional agent identifier for the reset. Defaults to the MCP server\'s current derived agent ID.',
       },
     },
     required: [],

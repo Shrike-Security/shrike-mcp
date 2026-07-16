@@ -5,13 +5,13 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
 [![Smithery](https://smithery.ai/badge/shrike-mcp)](https://smithery.ai/server/shrike-mcp)
 
-**AI governance for every AI interaction. 12 MCP tools. Multi-layered cognitive pipeline. Works without an API key.**
+**AI governance for every AI interaction. 14 MCP tools. 9-layer cognitive pipeline. Works without an API key.**
 
 Shrike MCP is the Model Context Protocol server for [Shrike](https://shrikesecurity.com). From employees using ChatGPT to autonomous agents executing code — Shrike evaluates every AI interaction in real-time with tools to scan prompts, responses, SQL queries, file writes, CLI commands, web searches, and agent-to-agent messages. Detects prompt injection, jailbreaks, data leakage, PII exposure, and multi-turn manipulation before they cause harm.
 
 ## Shrike Platform
 
-**Shrike** is the independent governance layer for AI interactions. It evaluates inputs, outputs, tool calls, and agent-to-agent communication through a multi-layered cognitive pipeline — from sub-millisecond pattern matching to LLM-powered semantic analysis and multi-turn session correlation. Governs employees using AI tools, developers using coding assistants, autonomous agents, and customer-facing chatbots through the same pipeline.
+**Shrike** is the independent governance layer for AI interactions. It evaluates inputs, outputs, tool calls, and agent-to-agent communication through a 9-layer cognitive pipeline — from sub-millisecond pattern matching to LLM-powered semantic analysis and multi-turn session correlation. Governs employees using AI tools, developers using coding assistants, autonomous agents, and customer-facing chatbots through the same pipeline.
 
 This repo is the **MCP server** — one of several ways to integrate:
 
@@ -61,9 +61,9 @@ This repo is the **MCP server** — one of several ways to integrate:
 
 Get a free key at [shrikesecurity.com/signup](https://shrikesecurity.com/signup) — instant, no credit card.
 
-**3. Your agent now has 12 security tools.** Every prompt, response, and tool call can be scanned before execution.
+**3. Your agent now has 14 security tools** (9 governance scanners, 1 scope declaration, and 4 session & approval tools). Every prompt, response, and tool call can be scanned before execution.
 
-## Twelve Tools
+## Fourteen Tools
 
 | Tool | What It Guards | Example Threat |
 |------|---------------|----------------|
@@ -75,10 +75,12 @@ Get a free key at [shrikesecurity.com/signup](https://shrikesecurity.com/signup)
 | `scan_web_search` | Search queries before execution | PII in search: "records for John Smith SSN..." |
 | `scan_a2a_message` | Agent-to-agent messages before processing | Prompt injection in inter-agent communication |
 | `scan_agent_card` | A2A AgentCard metadata before trusting | Embedded injection in agent discovery, capability spoofing |
+| `scan_mcp_schema` | MCP tool definitions before trusting them | Tool-poisoning: hidden instructions in a tool's description or inputSchema |
 | `check_approval` | Human-in-the-loop approval status | Poll and submit decisions for flagged actions |
 | `report_bypass` | User-reported missed detections | Feeds ThreatSense adaptive learning |
-| `get_threat_intel` | Current threat patterns and intelligence | Latest prompt injection techniques |
 | `reset_session` | Clear session correlation state | Reset L9 turn history after resolving flagged patterns |
+| `session_status` | Read-only lookup of L9 session state | Confirm risk score + patterns before rotating a locked session |
+| `scan_declare_scope` | Declared operating scope for task-scoped agents | Enforces allowed/forbidden tools and expiry on every subsequent scan |
 
 ## How It Works
 
@@ -104,7 +106,7 @@ Enterprise tier adds **session correlation** (L9) — tracking multi-turn patter
 
 ## Detection Pipeline
 
-Every scan runs through a multi-layer cascade. Lower layers are sub-millisecond pattern matching; higher layers add LLM-powered semantic analysis. Tier determines how deep the scan goes.
+Every scan runs through the 9-layer cognitive pipeline. Lower layers are sub-millisecond pattern matching; higher layers add LLM-powered semantic analysis. Tier determines how deep the scan goes. The table below shows the specialized sub-detectors within each layer.
 
 | Layer | What It Does | Tier |
 |-------|-------------|------|
@@ -117,22 +119,22 @@ Every scan runs through a multi-layer cascade. Lower layers are sub-millisecond 
 | L6 | Visual text analysis (RTL tricks, visual homoglyphs) | Community+ |
 | L7 | LLM semantic analysis via Vertex AI (zero-day detection) | Community+ |
 | L8 | Response intelligence (LLM compromise, tonality drift) | Pro+ |
-| L9 | Multi-turn session correlation (7 pattern detectors) | Enterprise |
+| L9 | Multi-turn session correlation (7 pattern detectors) | Pro+ |
 
 The **cascade optimizer** exits early when high-confidence detection is achieved at a lower layer — so most scans complete in under 10ms without needing the LLM layer.
 
 ## Tiers
 
-All 12 tools are available on every tier. Tiers control detection depth and volume.
+All 14 tools are available on every tier. Tiers control detection depth and volume.
 
 | | Anonymous | Community | Pro | Enterprise |
 |---|---|---|---|---|
-| Detection Layers | L1-L5 | L1-L7 | L1-L8 | L1-L9 |
+| Detection Layers | L1-L5 | L1-L7 | L1-L9 (full) | L1-L9 (full) |
 | API Key | Not needed | Free signup | Paid | Paid |
 | Rate Limit | — | 10/min | 100/min | 1,000/min |
 | Scans/month | — | 1,000 | 25,000 | 1,000,000 |
 | Dashboard | No | Yes | Yes | Yes |
-| Session Correlation | No | No | No | Yes |
+| Session Correlation (L9) | No | No | Yes | Yes |
 | Compliance Policies | Default | Default | Custom | Custom |
 
 **Anonymous** (no API key): Pattern-based detection only (L1-L5). Good for evaluation and basic protection.
@@ -143,7 +145,7 @@ All 12 tools are available on every tier. Tiers control detection depth and volu
 
 ## Compliance
 
-Built-in policy catalogues across 7 frameworks:
+Built-in policy catalogues with sensitive-data detection aligned to 5 major regulatory frameworks:
 
 | Framework | Coverage |
 |-----------|----------|
@@ -152,8 +154,8 @@ Built-in policy catalogues across 7 frameworks:
 | **ISO 27001** | Information security — passwords, tokens, certificates |
 | **SOC 2** | Secrets, credentials, API keys, cloud tokens |
 | **NIST** | AI risk management (IR 8596), cybersecurity framework (CSF 2.0) |
-| **PCI-DSS** | Cardholder data — PAN, CVV, expiry, track data |
-| **WebMCP** | MCP tool description injection, data exfiltration |
+
+Detection coverage is not a certification claim — see [shrikesecurity.com/compliance](https://shrikesecurity.com/compliance) for our current certification status.
 
 ## Configuration
 
@@ -267,7 +269,7 @@ Looking for AI security tools? Here's how Shrike compares:
 | Session correlation (multi-turn) | Yes — 7 detectors | No | No | No |
 | CLI command scanning | Yes | No | No | No |
 | A2A protocol scanning | Yes | No | No | No |
-| MCP server integration | Yes — 12 tools | No | No | No |
+| MCP server integration | Yes — 14 tools | No | No | No |
 | Agent delegation chain tracking | Yes | No | No | No |
 | Hardware enforcement (TEE) | Yes — AMD SEV-SNP | No | No | No |
 | Deploy anywhere (cloud, VPC, air-gapped) | Yes | Cloud only | Cloud only | Cloud only |
@@ -288,9 +290,6 @@ Once the MCP server is connected, try these prompts in Claude or your MCP client
 
 4. **File write validation:**
    > "Check if this file write is safe: writing to ../../../../etc/passwd"
-
-5. **Threat intelligence:**
-   > "Get the latest AI security threat intelligence"
 
 ## Links
 

@@ -36,7 +36,6 @@ import { ShrikeOAuthProvider, isApiKey } from './oauth/provider.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { scanPrompt, scanPromptTool } from './tools/scan.js';
 import { reportBypass, reportBypassTool } from './tools/reportBypass.js';
-import { getThreatIntel, getThreatIntelTool } from './tools/threatIntel.js';
 import { scanWebSearch, scanWebSearchTool } from './tools/webSearch.js';
 import { scanSQLQuery, scanSQLQueryTool } from './tools/sqlQuery.js';
 import { scanCommand, scanCommandTool } from './tools/command.js';
@@ -44,8 +43,11 @@ import { scanFileWrite, scanFileWriteTool } from './tools/fileWrite.js';
 import { scanResponse, scanResponseTool } from './tools/scanResponse.js';
 import { checkApproval, checkApprovalTool } from './tools/checkApproval.js';
 import { resetSession, resetSessionTool } from './tools/sessionReset.js';
+import { sessionStatus, sessionStatusTool } from './tools/sessionStatus.js';
 import { scanA2AMessage, scanA2AMessageTool } from './tools/a2aMessage.js';
 import { scanAgentCard, scanAgentCardTool } from './tools/agentCard.js';
+import { scanDeclareScope, scanDeclareScopeTool } from './tools/scanDeclareScope.js';
+import { scanMCPSchema, scanMCPSchemaTool } from './tools/scanMCPSchema.js';
 import { syncPIIPatterns } from './utils/piiSync.js';
 import { createKeyProvider } from './keyProvider.js';
 import { KeyRotationManager } from './keyRotation.js';
@@ -80,7 +82,7 @@ Usage:
 Environment Variables:
   SHRIKE_API_KEY               API key for authenticated scans (enables LLM layers)
   SHRIKE_BACKEND_URL           Backend API URL (default: https://api.shrikesecurity.com/agent)
-  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 10)
+  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 12)
   SHRIKE_MODE                  Tool mode: bundled (single shrike_scan tool) or omit for normal
   MCP_TRANSPORT                Transport mode: stdio (default) or http
   MCP_PORT                     HTTP server port (default: 8000, used in http mode)
@@ -97,9 +99,9 @@ HTTP Endpoints (when MCP_TRANSPORT=http):
   GET  /health                 Health check for load balancers
   GET  /.well-known/agent-card.json  Agent discovery metadata
 
-Tools (12): scan_prompt, scan_response, scan_sql_query, scan_command,
-            scan_file_write, scan_web_search, scan_a2a_message, scan_agent_card,
-            report_bypass, get_threat_intel, check_approval, reset_session
+Tools: scan_prompt, scan_response, scan_sql_query, scan_command,
+       scan_file_write, scan_web_search, scan_a2a_message, scan_agent_card,
+       report_bypass, check_approval, reset_session, session_status
 
 Docs: https://github.com/Shrike-Security/shrike-mcp`);
   process.exit(0);
@@ -157,10 +159,6 @@ const TOOL_REGISTRY: Record<string, {
     definition: reportBypassTool,
     handler: (a, _c) => reportBypass(a),
   },
-  get_threat_intel: {
-    definition: getThreatIntelTool,
-    handler: (a, _c) => getThreatIntel(a),
-  },
   check_approval: {
     definition: checkApprovalTool,
     handler: (a, c) => checkApproval(a, c),
@@ -169,6 +167,10 @@ const TOOL_REGISTRY: Record<string, {
     definition: resetSessionTool,
     handler: (a, _c) => resetSession(a),
   },
+  session_status: {
+    definition: sessionStatusTool,
+    handler: (a, _c) => sessionStatus(a),
+  },
   scan_a2a_message: {
     definition: scanA2AMessageTool,
     handler: (a, c) => scanA2AMessage(a, c),
@@ -176,6 +178,14 @@ const TOOL_REGISTRY: Record<string, {
   scan_agent_card: {
     definition: scanAgentCardTool,
     handler: (a, c) => scanAgentCard(a, c),
+  },
+  scan_declare_scope: {
+    definition: scanDeclareScopeTool,
+    handler: (a, _c) => scanDeclareScope(a),
+  },
+  scan_mcp_schema: {
+    definition: scanMCPSchemaTool,
+    handler: (a, _c) => scanMCPSchema(a),
   },
 };
 
@@ -197,20 +207,21 @@ Set 'type' to choose check:
 - a2a_message: Check incoming agent messages for injection or social engineering
 - agent_card: Check remote agent metadata for spoofing before you trust it
 - report_bypass: Report a missed threat so future you (and other agents) get better protection
-- threat_intel: Look up current threat patterns for your context
 - check_approval: Check status of approvals, or submit a decision after the user explicitly says so
-- session_reset: Reset multi-turn tracking when starting a new logical task`,
+- session_reset: Reset multi-turn tracking when starting a new logical task
+- session_status: Read-only lookup of accumulated L9 session risk + patterns (safe under quarantine)
+- declare_scope: Declare or refresh a task-scoped agent's operating scope (allowed / forbidden tools + expiry). Enforced pre-flight on every subsequent scan for that agent_id.`,
   inputSchema: {
     type: 'object' as const,
     properties: {
       type: {
         type: 'string',
-        enum: ['prompt', 'response', 'sql_query', 'command', 'file_write', 'web_search', 'report_bypass', 'threat_intel', 'check_approval', 'session_reset', 'a2a_message', 'agent_card'],
+        enum: ['prompt', 'response', 'sql_query', 'command', 'file_write', 'web_search', 'report_bypass', 'check_approval', 'session_reset', 'session_status', 'a2a_message', 'agent_card', 'declare_scope'],
         description: 'Scan type to perform',
       },
       input: {
         type: 'object',
-        description: 'Input for the scan. For prompt: {content, context?, redact_pii?}. For sql_query: {query, database?}. For command: {command, shell?, execution_context?}. For file_write: {path, content, mode?}. For web_search: {query, targetDomains?}. For response: {response, original_prompt?}. For report_bypass: {prompt?, sqlQuery?, ...}. For threat_intel: {category?, limit?}.',
+        description: 'Input for the scan. For prompt: {content, context?, redact_pii?}. For sql_query: {query, database?}. For command: {command, shell?, execution_context?}. For file_write: {path, content, mode?}. For web_search: {query, targetDomains?}. For response: {response, original_prompt?}. For report_bypass: {prompt?, sqlQuery?, ...}.',
         additionalProperties: true,
       },
     },
@@ -234,11 +245,13 @@ const BUNDLED_TYPE_MAP: Record<string, string> = {
   file_write: 'scan_file_write',
   web_search: 'scan_web_search',
   report_bypass: 'report_bypass',
-  threat_intel: 'get_threat_intel',
   check_approval: 'check_approval',
   session_reset: 'reset_session',
+  session_status: 'session_status',
   a2a_message: 'scan_a2a_message',
   agent_card: 'scan_agent_card',
+  declare_scope: 'scan_declare_scope',
+  mcp_schema: 'scan_mcp_schema',
 };
 
 /**
@@ -299,7 +312,7 @@ function validateToolArgs(name: string, args: Record<string, unknown> | undefine
     case 'scan_agent_card':
       if (!args?.agent_card) throw new McpError(ErrorCode.InvalidParams, 'agent_card is required');
       break;
-    // get_threat_intel and reset_session have no required params
+    // reset_session has no required params
   }
 }
 

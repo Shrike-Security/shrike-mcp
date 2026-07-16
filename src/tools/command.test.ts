@@ -20,6 +20,9 @@ vi.mock('../config.js', () => ({
   getAuthHeaders: () => ({ 'Content-Type': 'application/json', Authorization: 'Bearer test-key' }),
   getSessionId: () => 'test-session',
   getAgentId: () => 'test-agent',
+  // No-op rotation for these mocked-response tests; rotation is
+  // exercised explicitly in sessionRotation.test.ts against the real config.
+  rotateSessionIfTriggered: () => null,
 }));
 
 // Mock circuit breaker to pass through (no state accumulation across tests)
@@ -169,6 +172,83 @@ describe('scanCommand', () => {
   });
 
   // =========================================================================
+  // SESSION IDENTITY PRECEDENCE
+  //
+  // Contract: caller-supplied session_id / agent_id / parent_agent_id / task_chain
+  // in the tool input MUST win over the MCP client's process-level defaults.
+  // The tool schema advertises these as parameters, so the implementation must
+  // observe them end-to-end. The same pattern is applied across all 8 tools
+  // (scan_prompt, scan_response, scan_command, scan_sql_query, scan_file_write,
+  // scan_web_search, scan_a2a_message, scan_agent_card); this test is the
+  // canonical assertion for that contract.
+  //
+  // Prior behavior (fixed 2026-07-03): caller values arrived first in the
+  // context spread and were silently clobbered by getSessionId() / getAgentId()
+  // — which broke the tool schema's own advertised interface and confounded
+  // black-box scoping tests (every integrator saw one process-level session
+  // instead of the fresh ones they were passing).
+  // =========================================================================
+
+  it('caller-supplied session_id wins over MCP client default', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        safe: true,
+        confidence: 1.0,
+        content_type: 'command',
+        scan_time_ms: 5,
+      }),
+    });
+
+    await scanCommand({
+      command: 'ls -la',
+      session_id: 'caller-owned-session-abc',
+      agent_id: 'caller-owned-agent-xyz',
+      parent_agent_id: 'orchestrator-root',
+      task_chain: 'root→worker→fs',
+    } as any);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://mock-backend.test/api/scan/specialized',
+      expect.objectContaining({
+        body: JSON.stringify({
+          content: 'ls -la',
+          content_type: 'command',
+          context: {
+            session_id: 'caller-owned-session-abc',
+            agent_id: 'caller-owned-agent-xyz',
+            parent_agent_id: 'orchestrator-root',
+            task_chain: 'root→worker→fs',
+            source_application: 'shrike-mcp',
+          },
+        }),
+      }),
+    );
+  });
+
+  it('caller cannot override server-managed source_application', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        safe: true,
+        confidence: 1.0,
+        content_type: 'command',
+        scan_time_ms: 5,
+      }),
+    });
+
+    await scanCommand({
+      command: 'ls -la',
+      session_id: 'caller-session',
+      source_application: 'spoofed-integrator',
+    } as any);
+
+    const body = JSON.parse((mockFetch.mock.calls[0][1] as any).body);
+    expect(body.context.source_application).toBe('shrike-mcp');
+    expect(body.context.session_id).toBe('caller-session');
+  });
+
+  // =========================================================================
   // FAIL-CLOSED — Backend timeout
   // =========================================================================
 
@@ -204,7 +284,7 @@ describe('scanCommand', () => {
   });
 
   // =========================================================================
-  // BLOCK-OVERRIDE APPROVAL (SHRIKE-201)
+  // BLOCK-OVERRIDE APPROVAL
   // =========================================================================
 
   it('should return approval response for block-override policies', async () => {

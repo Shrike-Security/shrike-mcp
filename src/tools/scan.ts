@@ -254,16 +254,39 @@ export interface ScanResult {
     policy_name: string;
     expires_in_seconds: number;
   };
-  /** SHRIKE-501: L9 session risk score (0.0-1.0) */
-  sessionRiskScore?: number;
-  /** SHRIKE-501: L9 matched correlation patterns */
-  correlationPatterns?: Array<{
-    pattern_id: string;
-    pattern_name: string;
-    category: string;
-    confidence: number;
-    description: string;
-  }>;
+  /**
+   * L9 session outcome contract carried from backend response through to the
+   * sanitized wire response's top-level `session_state` block. Populated
+   * whenever the backend correlator had session identity to work with.
+   * See responseFormatter.SessionState.
+   */
+  sessionState?: {
+    session_risk_score: number;
+    session_turn_number: number;
+    session_patterns: string[];
+    session_locked?: boolean;
+  };
+  /**
+   * Cooperative Governance refuse tier. Threaded from backend
+   * `/api/scan/enforce` response through to the sanitized wire response's
+   * top-level `refuse_tier` field. See responseFormatter.RefuseTier.
+   */
+  refuseTier?: 'allow' | 'warn' | 'require_approval' | 'block';
+  /**
+   * Recovery guidance block. Threaded from backend to the
+   * sanitized top-level `recovery` field on refuse verdicts.
+   */
+  recovery?: {
+    instruction?: string;
+    available_tools?: string[];
+    patterns_triggered?: string[];
+  };
+  /**
+   * Specialized scan input type. Present on specialized-scan
+   * responses only — e.g. "sql" / "file_path" / "a2a_message" / "agent_card"
+   * / "command".
+   */
+  contentType?: string;
 }
 
 /**
@@ -307,14 +330,48 @@ export interface BackendResponse {
     action_summary: string;
     policy_name: string;
     expires_in_seconds: number;
-    // SHRIKE-201: Block-override threat context
+    // Block-override threat context
     threat_type?: string;
     severity?: string;
     owasp_category?: string;
     risk_factors?: string[];
     original_action?: string;
   };
-  // SHRIKE-501: L9 session correlation data
+  /**
+   * L9 session outcome contract. Populated by the backend on every response
+   * when session identity was present. Threaded through the tool as
+   * `sessionState` on ScanResult and surfaced top-level on the wire response.
+   */
+  session_state?: {
+    session_risk_score: number;
+    session_turn_number: number;
+    session_patterns: string[];
+    session_locked?: boolean;
+  };
+  /**
+   * Cooperative Governance refuse tier.
+   * Emitted by `/api/scan/enforce` on every response. MUST be forwarded to
+   * the sanitized wire so callers can distinguish allow / warn /
+   * require_approval / block without inferring from action.
+   */
+  refuse_tier?: 'allow' | 'warn' | 'require_approval' | 'block';
+  /**
+   * Recovery guidance block. Emitted on refuse verdicts —
+   * carries the canonical LockedSessionInstruction on session-locked
+   * responses. MUST be forwarded to the sanitized wire.
+   */
+  recovery?: {
+    instruction?: string;
+    available_tools?: string[];
+    patterns_triggered?: string[];
+  };
+  /**
+   * Specialized scan input type. Populated by the specialized
+   * endpoint. MUST be forwarded on specialized-scan responses.
+   */
+  content_type?: string;
+  // (retained on BackendResponse for legacy readers, but the sanitizer no
+  // longer surfaces these — session_state above is the customer contract)
   session_risk_score?: number;
   correlation_patterns?: Array<{
     pattern_id: string;
@@ -336,6 +393,7 @@ export interface BackendResponse {
 export async function scanPrompt(input: ScanInput, customerId: string = 'anonymous'): Promise<ScanPromptResponse> {
   const requestId = generateRequestId();
   const startTime = Date.now();
+  const effective_session_id = (input as any).session_id || getSessionId();
 
   // Phase 8b: Client-side size validation to fail fast
   const totalSize = input.content.length + (input.context?.length || 0);
@@ -382,7 +440,7 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
     } else {
       console.error(`[scan] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
     }
-    return sanitizeScanResult(internalResult, requestId, 'scan_prompt');
+    return sanitizeScanResult(internalResult, requestId, effective_session_id, 'scan_prompt');
   }
 
   // PII redaction: redact before sending to backend so PII never leaves MCP
@@ -447,7 +505,7 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
             conversation_history: contextForBackend,
             scan_type: 'full',
             context: {
-              session_id: (input as any).session_id || getSessionId(),
+              session_id: effective_session_id,
               agent_id: (input as any).agent_id || getAgentId(),
               parent_agent_id: (input as any).parent_agent_id || '',
               task_chain: (input as any).task_chain || '',
@@ -467,7 +525,7 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
       } else {
         console.error(`[scan] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return { ...sanitizeScanResult(internalResult, requestId, 'scan_prompt'), pii_redaction: piiRedaction };
+      return { ...sanitizeScanResult(internalResult, requestId, effective_session_id, 'scan_prompt'), pii_redaction: piiRedaction };
     }
 
     const data = await response.json() as BackendResponse;
@@ -479,7 +537,7 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
       console.error(`[scan] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
     }
 
-    return { ...sanitizeScanResult(internalResult, requestId, 'scan_prompt'), pii_redaction: piiRedaction };
+    return { ...sanitizeScanResult(internalResult, requestId, effective_session_id, 'scan_prompt'), pii_redaction: piiRedaction };
 
   } catch (error) {
     let internalResult: ScanResult;
@@ -506,7 +564,7 @@ export async function scanPrompt(input: ScanInput, customerId: string = 'anonymo
     } else {
       console.error(`[scan] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
     }
-    return { ...sanitizeScanResult(internalResult, requestId, 'scan_prompt'), pii_redaction: piiRedaction };
+    return { ...sanitizeScanResult(internalResult, requestId, effective_session_id, 'scan_prompt'), pii_redaction: piiRedaction };
   }
 }
 
@@ -584,9 +642,14 @@ function transformBackendResponse(data: BackendResponse, scanTimeMs: number): Sc
       scanType: 'full',
     },
     approvalInfo: data.approval_info,
-    // SHRIKE-501: L9 session correlation data
-    sessionRiskScore: data.session_risk_score,
-    correlationPatterns: data.correlation_patterns,
+    // L9 session outcome contract — passed through to the sanitized top-level
+    // session_state field on the wire response.
+    sessionState: data.session_state,
+    // Cooperative Governance fields — MUST be forwarded so
+    // callers see the four-state refuse tier + recovery guidance.
+    refuseTier: data.refuse_tier,
+    recovery: data.recovery,
+    contentType: data.content_type,
   };
 }
 
@@ -662,7 +725,11 @@ When blocked=false: { action: "allow", agent_instruction, audit: { scan_id, time
 
 When redact_pii=true, PII is redacted client-side before scanning. The response includes pii_redaction with redacted_content and tokens for rehydrating LLM responses. PII never leaves the MCP process.
 
+IMPORTANT: When pii_redaction is present in the response, use pii_redaction.redacted_content as the safe input to your LLM — NOT the original content field. The top-level action may say "allow" because the backend correctly saw redacted tokens, but the raw prompt still contains PII. After the LLM responds, use pii_redaction.tokens to rehydrate values for display to the end user.
+
 Enterprise context: This is your first line of defense — every inbound message from untrusted sources should pass through this tool before reaching your LLM or business logic.
+
+SESSION QUARANTINE (observe plane): This tool is scan_class="observe" and quarantine_gated=false. It remains available and returns real verdicts even when the session is quarantined, because content analysis has no side effects — you still need visibility into what an agent is being asked to process. Only the act-plane tools (scan_command, scan_sql_query, scan_file_write, scan_web_search, scan_a2a_message, scan_agent_card) short-circuit with threat_type="session_locked" on a quarantined session.
 
 ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOCKING the action. Do NOT proceed without a successful scan result.`,
   inputSchema: {
@@ -705,5 +772,17 @@ ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOC
     destructiveHint: false,
     idempotentHint: true,
     openWorldHint: true,
+  },
+  
+  // Shrike governance-plane classification. Placed in _meta (MCP's
+  // explicit extension slot) rather than annotations, because
+  // ToolAnnotationsSchema uses Zod $strip mode and drops unknown
+  // fields at tools/list serialization. _meta is z.ZodRecord and
+  // preserves arbitrary keys through the wire. Keys are prefixed with
+  // 'shrike/' to namespace against other extensions.
+  _meta: {
+    'shrike/scan_class': 'observe',
+    'shrike/quarantine_gated': false,
+    'shrike/contract_version': '2026-07-03',
   },
 };

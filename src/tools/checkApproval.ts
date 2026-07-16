@@ -21,12 +21,18 @@ export interface CheckApprovalInput {
 interface ApprovalStatusResponse {
   id: string;
   status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
-  // SHRIKE-302: Backend returns expires_in_seconds (precomputed), not expires_at
+  // Backend returns expires_in_seconds (precomputed), not expires_at
   expires_in_seconds?: number;
   decided_by?: string;
   decided_at?: string;
   decided_via?: string;
   justification?: string;
+  // 2026-07-01: Agent-contract signal — "blocking" means the agent MUST NOT
+  // proceed with any work that depends on this decision; "advisory" means
+  // the agent may defer and continue with unrelated tasks. Defaults to
+  // "advisory" pre-launch.
+  enforcement_severity?: 'blocking' | 'advisory';
+  expected_response_by_seconds?: number;
 }
 
 /**
@@ -61,7 +67,7 @@ export async function checkApproval(input: CheckApprovalInput, customerId: strin
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        // SHRIKE-401: Handle severity-based enforcement responses
+        // Handle severity-based enforcement responses
         if (response.status === 403) {
           const errorData = await response.json().catch(() => ({ error: 'Forbidden', code: 'UNKNOWN' }));
           const code = errorData.code || '';
@@ -90,9 +96,10 @@ export async function checkApproval(input: CheckApprovalInput, customerId: strin
       const scanTimeMs = Date.now() - startTime;
       console.error(`[check_approval] ${requestId} decision=${input.decision} approval_id=${input.approval_id} time=${scanTimeMs}ms`);
 
-      // SHRIKE-301: Rejection must return blocked:true so agents stop
+      // Rejection must return blocked:true so agents stop
       if (input.decision === 'rejected') {
         return {
+          safe: false,
           blocked: true,
           action: 'block',
           threat_type: 'unknown' as any,
@@ -111,6 +118,7 @@ export async function checkApproval(input: CheckApprovalInput, customerId: strin
       }
 
       return {
+        safe: true,
         blocked: false,
         action: 'allow',
         agent_instruction: 'The approval has been APPROVED. You may now proceed with the original action that was held for approval.',
@@ -161,12 +169,13 @@ export async function checkApproval(input: CheckApprovalInput, customerId: strin
  * Builds a status response based on approval state.
  */
 function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): SanitizedResponse {
-  // SHRIKE-302: Backend returns precomputed expires_in_seconds, not expires_at
+  // Backend returns precomputed expires_in_seconds, not expires_at
   const expiresInSeconds = data.expires_in_seconds ?? 0;
 
   switch (data.status) {
     case 'approved':
       return {
+        safe: true,
         blocked: false,
         action: 'allow',
         agent_instruction: 'This action has been APPROVED by a human reviewer. You may now proceed with the original action that was held for approval.',
@@ -179,6 +188,7 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
 
     case 'rejected':
       return {
+        safe: false,
         blocked: true,
         action: 'block',
         threat_type: 'unknown',
@@ -197,6 +207,7 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
 
     case 'expired':
       return {
+        safe: false,
         blocked: true,
         action: 'block',
         threat_type: 'unknown',
@@ -215,6 +226,7 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
 
     case 'cancelled':
       return {
+        safe: false,
         blocked: true,
         action: 'block',
         threat_type: 'unknown',
@@ -234,7 +246,11 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
     case 'pending':
     default: {
       const minutesLeft = Math.ceil(expiresInSeconds / 60);
+      const enforcementSeverity = data.enforcement_severity || 'advisory';
+      const expectedResponseBy = data.expected_response_by_seconds ?? expiresInSeconds;
+      const isBlocking = enforcementSeverity === 'blocking';
       return {
+        safe: false,
         blocked: true,
         action: 'require_approval',
         approval_id: data.id,
@@ -243,8 +259,12 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
           policy_name: (data as any).policy_name || 'Approval Policy',
           approval_level: (data as any).approval_level || 'edge',
           expires_in_seconds: expiresInSeconds,
+          enforcement_severity: enforcementSeverity,
+          expected_response_by_seconds: expectedResponseBy,
         },
-        agent_instruction: `This approval is still PENDING (expires in ${minutesLeft} minutes). Do NOT proceed with the original action. Do NOT poll in a loop. Inform the user that the approval is still awaiting a decision and wait for them to ask you to check again.`,
+        agent_instruction: isBlocking
+          ? `This approval is still PENDING (expires in ${minutesLeft} minutes) and is marked BLOCKING. Do NOT proceed with the original action AND do NOT proceed with any downstream tasks that depend on this decision. Park the whole cascade. Do NOT poll in a loop; wait for the user to check again.`
+          : `This approval is still PENDING (expires in ${minutesLeft} minutes) and is marked ADVISORY. Do NOT proceed with the original action, but you MAY continue with unrelated tasks while waiting. Do NOT poll in a loop; wait for the user to check again.`,
         user_message: `Approval is still pending. It will expire in ${minutesLeft} minutes if not reviewed.`,
         audit: {
           scan_id: requestId,
@@ -261,6 +281,7 @@ function buildStatusResponse(data: ApprovalStatusResponse, requestId: string): S
  */
 function buildErrorResponse(requestId: string, reason: string): SanitizedResponse {
   return {
+    safe: false,
     blocked: true,
     action: 'block',
     threat_type: 'scan_error',
@@ -279,10 +300,11 @@ function buildErrorResponse(requestId: string, reason: string): SanitizedRespons
 }
 
 /**
- * SHRIKE-401: Response for high/critical approvals that require dashboard auth.
+ * Response for high/critical approvals that require dashboard auth.
  */
 function buildDashboardRequiredResponse(requestId: string, serverMsg: string): SanitizedResponse {
   return {
+    safe: false,
     blocked: true,
     action: 'block',
     threat_type: 'scan_error',
@@ -301,10 +323,11 @@ function buildDashboardRequiredResponse(requestId: string, serverMsg: string): S
 }
 
 /**
- * SHRIKE-401: Response when cooldown period hasn't elapsed yet.
+ * Response when cooldown period hasn't elapsed yet.
  */
 function buildCooldownResponse(requestId: string, serverMsg: string): SanitizedResponse {
   return {
+    safe: false,
     blocked: true,
     action: 'block',
     threat_type: 'scan_error',
@@ -323,10 +346,11 @@ function buildCooldownResponse(requestId: string, serverMsg: string): SanitizedR
 }
 
 /**
- * SHRIKE-401: Response when the same user tries to approve their own request.
+ * Response when the same user tries to approve their own request.
  */
 function buildSelfApprovalBlockedResponse(requestId: string): SanitizedResponse {
   return {
+    safe: false,
     blocked: true,
     action: 'block',
     threat_type: 'scan_error',
@@ -368,6 +392,12 @@ DECIDE MODE (decision + justification parameters): Submits a decision after the 
 - If the server returns a 403 error, inform the user of the reason and direct them to the dashboard if needed.
 
 IMPORTANT: Do NOT automatically poll in a loop. Approvals may take minutes to hours. Inform the user of the pending status and wait for them to ask you to check again.
+
+ENFORCEMENT SEVERITY (agent contract): While an approval is pending, approval_context.enforcement_severity signals how your control flow should treat it:
+- "blocking" — do NOT proceed with the flagged action AND do NOT proceed with any downstream work that depends on its outcome. Park the whole cascade until the decision arrives. This is set by policy for actions where dependent steps would be incorrect if executed before approval (e.g., data pipelines, cascading writes).
+- "advisory" — do NOT proceed with the flagged action, but you MAY defer this task and continue with unrelated work. Come back and check_approval when the user prompts you or when a dependent step needs the decision.
+
+Pre-launch, the default is "advisory". Policy-driven per-action severity ships post-launch.
 
 Enterprise context: Provides the human-in-the-loop control required for compliance (GDPR Art. 22, SOC2 CC8.1). Every decision is recorded with full audit trail.
 

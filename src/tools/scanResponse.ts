@@ -117,6 +117,7 @@ const MAX_CONTENT_SIZE = 100 * 1024; // 100KB
 export async function scanResponse(input: ScanResponseInput, customerId: string = 'anonymous'): Promise<ScanResponseResult> {
   const requestId = generateRequestId();
   const startTime = Date.now();
+  const effective_session_id = (input as any).session_id || getSessionId();
 
   const totalSize = input.response.length + (input.original_prompt?.length || 0);
   if (totalSize > MAX_CONTENT_SIZE) {
@@ -162,7 +163,7 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
     } else {
       console.error(`[response] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
     }
-    return sanitizeScanResult(internalResult, requestId, 'scan_response');
+    return sanitizeScanResult(internalResult, requestId, effective_session_id, 'scan_response');
   }
 
   try {
@@ -196,10 +197,13 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
             response: responseToScan,
             scan_type: 'full',
             context: {
-              session_id: getSessionId(),
-              agent_id: getAgentId(),
+              // Session identity — caller-supplied value wins; the MCP client's
+              // process-level SESSION_ID / AGENT_ID are fallbacks only.
+              session_id: effective_session_id,
+              agent_id: (input as any).agent_id || getAgentId(),
               parent_agent_id: (input as any).parent_agent_id || '',
               task_chain: (input as any).task_chain || '',
+              // Server-managed integrity field — cannot be overridden by caller.
               source_application: 'shrike-mcp',
             },
           }),
@@ -216,7 +220,7 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
       } else {
         console.error(`[response] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return sanitizeScanResult(internalResult, requestId, 'scan_response');
+      return sanitizeScanResult(internalResult, requestId, effective_session_id, 'scan_response');
     }
 
     const data = await response.json() as BackendResponse;
@@ -236,7 +240,7 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
       console.error(`[response] ${requestId} safe=${internalResult.safe} action=${internalResult.recommendedAction} time=${Date.now() - startTime}ms`);
     }
 
-    const sanitized = sanitizeScanResult(internalResult, requestId, 'scan_response');
+    const sanitized = sanitizeScanResult(internalResult, requestId, effective_session_id, 'scan_response');
 
     // Rehydrate PII tokens if provided and response is safe
     if (input.pii_tokens?.length && !sanitized.blocked) {
@@ -278,7 +282,7 @@ export async function scanResponse(input: ScanResponseInput, customerId: string 
     } else {
       console.error(`[response] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
     }
-    return sanitizeScanResult(internalResult, requestId, 'scan_response');
+    return sanitizeScanResult(internalResult, requestId, effective_session_id, 'scan_response');
   }
 }
 
@@ -352,6 +356,14 @@ function transformBackendResponse(data: BackendResponse, scanTimeMs: number): Sc
       scanType: 'response',
     },
     approvalInfo: data.approval_info,
+    // Contract symmetry: every scan response — safe OR blocked, general OR
+    // specialized path — carries the same four symmetric fields. scan.ts
+    // forwards these; scan_response must too, or callers watching
+    // session_state/refuse_tier see the fields vanish on response scans.
+    sessionState: data.session_state,
+    refuseTier: data.refuse_tier,
+    recovery: data.recovery,
+    contentType: data.content_type,
   };
 }
 
@@ -418,6 +430,8 @@ When pii_tokens is provided (from scan_prompt with redact_pii=true), safe respon
 
 Enterprise context: Paired with scan_prompt, this completes the inbound/outbound scan pattern that prevents data exfiltration through model outputs and ensures compliance with data handling policies.
 
+SESSION QUARANTINE (observe plane): This tool is scan_class="observe" and quarantine_gated=false. It remains available and returns real verdicts even when the session is quarantined, because outbound content analysis has no side effects — you still need visibility into what an LLM has produced. Only the act-plane tools (scan_command, scan_sql_query, scan_file_write, scan_web_search, scan_a2a_message, scan_agent_card) short-circuit with threat_type="session_locked" on a quarantined session.
+
 ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOCKING the response. Do NOT deliver unscanned LLM output.`,
   inputSchema: {
     type: 'object' as const,
@@ -468,5 +482,17 @@ ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOC
     destructiveHint: false,
     idempotentHint: true,
     openWorldHint: true,
+  },
+  
+  // Shrike governance-plane classification. Placed in _meta (MCP's
+  // explicit extension slot) rather than annotations, because
+  // ToolAnnotationsSchema uses Zod $strip mode and drops unknown
+  // fields at tools/list serialization. _meta is z.ZodRecord and
+  // preserves arbitrary keys through the wire. Keys are prefixed with
+  // 'shrike/' to namespace against other extensions.
+  _meta: {
+    'shrike/scan_class': 'observe',
+    'shrike/quarantine_gated': false,
+    'shrike/contract_version': '2026-07-03',
   },
 };

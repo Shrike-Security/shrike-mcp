@@ -38,7 +38,7 @@ describe('checkApproval', () => {
 
   describe('poll mode', () => {
     it('should return require_approval for pending status', async () => {
-      // SHRIKE-302: Backend returns expires_in_seconds (precomputed), not expires_at
+      // Backend returns expires_in_seconds (precomputed), not expires_at
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -212,7 +212,7 @@ describe('checkApproval', () => {
         justification: 'Too risky',
       });
 
-      // SHRIKE-301: Rejection must return blocked:true so agents stop
+      // Rejection must return blocked:true so agents stop
       expect(result.blocked).toBe(true);
       expect(result.action).toBe('block');
       if (result.action === 'block') {
@@ -334,7 +334,7 @@ describe('checkApproval', () => {
     });
 
     it('should compute expires_in_seconds correctly for pending', async () => {
-      // SHRIKE-302: Backend returns precomputed expires_in_seconds
+      // Backend returns precomputed expires_in_seconds
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -352,7 +352,7 @@ describe('checkApproval', () => {
     });
 
     it('should use 0 when expires_in_seconds is not provided', async () => {
-      // SHRIKE-302: When backend omits expires_in_seconds, default to 0
+      // When backend omits expires_in_seconds, default to 0
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({

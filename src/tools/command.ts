@@ -16,6 +16,7 @@ import {
   logInternalDetails,
   extractSpecializedInternalDetails,
   type SanitizedResponse,
+  type SessionState,
 } from '../utils/responseFormatter.js';
 import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
@@ -61,6 +62,14 @@ export interface CommandResult {
     risk_factors?: string[];
     original_action?: string;
   };
+  /** L9 session outcome contract — see responseFormatter.SessionState. */
+  sessionState?: SessionState;
+  /** Cooperative Governance refuse tier. Forwarded to top-level `refuse_tier`. */
+  refuseTier?: 'allow' | 'warn' | 'require_approval' | 'block';
+  /** Recovery guidance block. Forwarded to top-level `recovery`. */
+  recovery?: { instruction?: string; available_tools?: string[]; patterns_triggered?: string[] };
+  /** Specialized scan input type — forwarded to top-level `content_type`. */
+  contentType?: string;
 }
 
 /**
@@ -93,6 +102,12 @@ interface BackendSpecializedResponse {
     risk_factors?: string[];
     original_action?: string;
   };
+  /** L9 session outcome contract — see responseFormatter.SessionState. */
+  session_state?: SessionState;
+  /** Cooperative Governance refuse tier. */
+  refuse_tier?: 'allow' | 'warn' | 'require_approval' | 'block';
+  /** Recovery guidance block. */
+  recovery?: { instruction?: string; available_tools?: string[]; patterns_triggered?: string[] };
 }
 
 /**
@@ -156,6 +171,7 @@ export async function scanCommand(input: CommandInput, customerId: string = 'ano
   const requestId = generateRequestId();
   const startTime = Date.now();
   const commandLength = input.command.length;
+  const effective_session_id = (input as any).session_id || getSessionId();
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), config.scanTimeoutMs);
@@ -187,10 +203,17 @@ export async function scanCommand(input: CommandInput, customerId: string = 'ano
           content_type: 'command',
           context: {
             ...context,
-            session_id: getSessionId(),
-            agent_id: getAgentId(),
+            // Session identity — caller-supplied value wins; the MCP client's
+            // process-level SESSION_ID / AGENT_ID are fallbacks only. Reversing
+            // the earlier spread order (which silently clobbered caller inputs)
+            // is what makes the tool schema's session_id/agent_id parameters
+            // actually observable end-to-end.
+            session_id: effective_session_id,
+            agent_id: (input as any).agent_id || getAgentId(),
             parent_agent_id: (input as any).parent_agent_id || '',
             task_chain: (input as any).task_chain || '',
+            // Server-managed integrity field — always this exact value; caller
+            // cannot override.
             source_application: 'shrike-mcp',
           },
         }),
@@ -208,7 +231,7 @@ export async function scanCommand(input: CommandInput, customerId: string = 'ano
       } else {
         console.error(`[command] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return sanitizeCommandResult(internalResult, requestId, 'scan_command');
+      return sanitizeCommandResult(internalResult, requestId, effective_session_id, 'scan_command');
     }
 
     const data = await response.json() as BackendSpecializedResponse;
@@ -236,6 +259,10 @@ export async function scanCommand(input: CommandInput, customerId: string = 'ano
       },
       commandAnalysis: data.command_analysis,
       approvalInfo: data.approval_info,
+      sessionState: data.session_state,
+      refuseTier: data.refuse_tier,
+      recovery: data.recovery,
+      contentType: data.content_type,
     };
 
     // Log scan result
@@ -246,7 +273,7 @@ export async function scanCommand(input: CommandInput, customerId: string = 'ano
     }
 
     // Return sanitized response (protects IP)
-    return sanitizeCommandResult(internalResult, requestId, 'scan_command');
+    return sanitizeCommandResult(internalResult, requestId, effective_session_id, 'scan_command');
 
   } catch (error) {
     clearTimeout(timeoutId);
@@ -268,7 +295,7 @@ export async function scanCommand(input: CommandInput, customerId: string = 'ano
     } else {
       console.error(`[command] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
     }
-    return sanitizeCommandResult(internalResult, requestId, 'scan_command');
+    return sanitizeCommandResult(internalResult, requestId, effective_session_id, 'scan_command');
   }
 }
 
@@ -298,6 +325,8 @@ Checks for:
 Common safe commands (ls, git, npm, docker build, go test, etc.) pass through without triggering.
 
 Enterprise context: Critical for any agent with shell/subprocess access. Prevents both malicious and accidental damage from LLM-generated commands.
+
+SESSION QUARANTINE (act plane): This tool is scan_class="act" and quarantine_gated=true. When threat_type is "session_locked", the session's accumulated risk from earlier turns has crossed the quarantine threshold. This tool refuses to authorize the requested side effect on that session; the detection cascade is skipped. Recovery: rotate to a new session_id (MCP 4.0.x auto-rotates on this verdict; manual callers can pass a fresh session_id in the tool arguments). reset_session is admin-restricted at this risk tier to preserve the correlation trail. The observe-plane tools (scan_prompt, scan_response) remain available — use them to inspect the payload you were about to send.
 
 ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOCKING the command. Do NOT execute unscanned commands.`,
   inputSchema: {
@@ -350,5 +379,17 @@ ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOC
     destructiveHint: false,
     idempotentHint: true,
     openWorldHint: true,
+  },
+  
+  // Shrike governance-plane classification. Placed in _meta (MCP's
+  // explicit extension slot) rather than annotations, because
+  // ToolAnnotationsSchema uses Zod $strip mode and drops unknown
+  // fields at tools/list serialization. _meta is z.ZodRecord and
+  // preserves arbitrary keys through the wire. Keys are prefixed with
+  // 'shrike/' to namespace against other extensions.
+  _meta: {
+    'shrike/scan_class': 'act',
+    'shrike/quarantine_gated': true,
+    'shrike/contract_version': '2026-07-03',
   },
 };

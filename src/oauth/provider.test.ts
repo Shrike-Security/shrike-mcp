@@ -379,7 +379,7 @@ describe('ShrikeOAuthProvider', () => {
 describe('isApiKey', () => {
   it('returns true for shrike_ prefixed tokens', () => {
     expect(isApiKey('shrike_abc123')).toBe(true);
-    expect(isApiKey('shrike_habiru_ent_2026')).toBe(true);
+    expect(isApiKey('shrike_enterprise_example')).toBe(true);
   });
 
   it('returns true for sk_ prefixed tokens', () => {

@@ -9,7 +9,13 @@ import { config, getAuthHeaders } from '../config.js';
 import { updatePIIPatterns, getPIIPatternCount, type PIIPattern } from './piiRedactor.js';
 
 /**
- * Backend response from GET /api/pii/patterns
+ * Backend response from GET /api/pii/patterns.
+ *
+ * The backend now ships `prefix` as an authoritative field. Older backends
+ * (pre-2026-07-01) omit it; the sync falls back to a threat_type-derived
+ * prefix so no pattern is ever silently dropped. That's the whole point of
+ * moving prefix resolution to the backend — Presidio-style, recognizer
+ * owns its entity tag, client stays dumb.
  */
 interface BackendPIIResponse {
   patterns: Array<{
@@ -17,40 +23,26 @@ interface BackendPIIResponse {
     threat_type: string;
     confidence: number;
     description: string;
+    prefix?: string; // authoritative when present; derived locally when absent
   }>;
   total: number;
   version: string;
 }
 
 /**
- * Maps backend threat_type to MCP token prefix.
- * e.g. pii_ssn → SSN, so redacted tokens become [SSN_1], [SSN_2].
+ * Fallback prefix derivation for backends that don't yet ship the
+ * `prefix` field. Matches the backend's derivePIIPrefix() in
+ * pii_handler.go — strip `pii_` and uppercase. Never returns empty:
+ * unknown threat_types become their own uppercase tag (e.g.
+ * `pii_wallet_eth` → `WALLET_ETH`) instead of being dropped.
+ *
+ * The point is: no threat_type ever silently disappears, and adding a
+ * new backend pattern requires zero client changes.
  */
-const PREFIX_MAP: Record<string, string> = {
-  pii_ssn: 'SSN',
-  pii_ssn_alt: 'SSN',
-  pii_credit_card: 'CARD',
-  pii_email: 'EMAIL',
-  pii_phone: 'PHONE',
-  pii_phone_intl: 'PHONE',
-  pii_street_address: 'ADDR',
-  pii_city_state_zip: 'ADDR',
-  pii_bank_account: 'ACCOUNT',
-  pii_routing_number: 'ROUTING',
-  pii_iban: 'IBAN',
-  pii_swift: 'SWIFT',
-  pii_medical_record: 'MRN',
-  pii_health_insurance: 'HEALTHID',
-  pii_drivers_license: 'DL',
-  pii_passport: 'PASSPORT',
-  pii_dob: 'DOB',
-  pii_medical_diagnosis: 'MEDINFO',
-  pii_medical_code: 'MEDCODE',
-  pii_prescription: 'RX',
-  pii_ein: 'TAXID',
-  pii_tin: 'TAXID',
-  pii_potential_name: 'NAME',
-};
+function fallbackPrefixFor(threatType: string): string {
+  const stripped = threatType.startsWith('pii_') ? threatType.slice(4) : threatType;
+  return stripped.toUpperCase() || 'PII';
+}
 
 /**
  * Converts a backend threat_type to a short name for the redaction entry.
@@ -94,11 +86,17 @@ export async function syncPIIPatterns(): Promise<void> {
     // Convert backend patterns to PIIPattern format
     const converted: PIIPattern[] = [];
 
+    let derivedFallbackCount = 0;
+
     for (const p of data.patterns) {
-      const prefix = PREFIX_MAP[p.threat_type];
+      // Backend is the source of truth for the redaction tag. If it
+      // ships a prefix (post-2026-07-01), use it verbatim. If not,
+      // derive locally so no pattern is ever silently dropped — this
+      // is the whole reason PREFIX_MAP was retired.
+      let prefix = p.prefix;
       if (!prefix) {
-        // Unknown threat type — skip silently (backend may have new types)
-        continue;
+        prefix = fallbackPrefixFor(p.threat_type);
+        derivedFallbackCount++;
       }
 
       try {
@@ -118,6 +116,12 @@ export async function syncPIIPatterns(): Promise<void> {
         // Invalid regex (Go-specific syntax not supported in JS) — skip
         console.error(`[PII] Skipping invalid pattern for ${p.threat_type}: regex compilation failed`);
       }
+    }
+
+    if (derivedFallbackCount > 0) {
+      // Not an error — expected for older backends. Log so operators can
+      // see if a backend upgrade would give them explicit prefixes.
+      console.error(`[PII] ${derivedFallbackCount}/${data.patterns.length} patterns used locally-derived prefix (backend older than 2026-07-01)`);
     }
 
     if (converted.length === 0) {

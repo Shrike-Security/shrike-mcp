@@ -16,6 +16,7 @@ import {
   logInternalDetails,
   extractSpecializedInternalDetails,
   type SanitizedResponse,
+  type SessionState,
 } from '../utils/responseFormatter.js';
 import { CircuitOpenError, scanCircuitBreaker } from '../utils/circuitBreaker.js';
 
@@ -57,6 +58,14 @@ export interface FileWriteResult {
     policy_name: string;
     expires_in_seconds: number;
   };
+  /** L9 session outcome contract — see responseFormatter.SessionState. */
+  sessionState?: SessionState;
+  /** Cooperative Governance refuse tier. Forwarded to top-level `refuse_tier`. */
+  refuseTier?: 'allow' | 'warn' | 'require_approval' | 'block';
+  /** Recovery guidance block. Forwarded to top-level `recovery`. */
+  recovery?: { instruction?: string; available_tools?: string[]; patterns_triggered?: string[] };
+  /** Specialized scan input type — forwarded to top-level `content_type`. */
+  contentType?: string;
 }
 
 /**
@@ -77,13 +86,19 @@ interface BackendSpecializedResponse {
     action_summary: string;
     policy_name: string;
     expires_in_seconds: number;
-    // SHRIKE-201: Block-override threat context
+    // Block-override threat context
     threat_type?: string;
     severity?: string;
     owasp_category?: string;
     risk_factors?: string[];
     original_action?: string;
   };
+  /** L9 session outcome contract — see responseFormatter.SessionState. */
+  session_state?: SessionState;
+  /** Cooperative Governance refuse tier. */
+  refuse_tier?: 'allow' | 'warn' | 'require_approval' | 'block';
+  /** Recovery guidance block. */
+  recovery?: { instruction?: string; available_tools?: string[]; patterns_triggered?: string[] };
 }
 
 /**
@@ -163,6 +178,7 @@ function createFailClosedResponse(
 export async function scanFileWrite(input: FileWriteInput, customerId: string = 'anonymous'): Promise<SanitizedResponse> {
   const requestId = generateRequestId();
   const startTime = Date.now();
+  const effective_session_id = (input as any).session_id || getSessionId();
   const pathLength = input.path.length;
   const contentLength = input.content.length;
   const fileExtension = getFileExtension(input.path) || 'none';
@@ -193,7 +209,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     } else {
       console.error(`[file] ${requestId} safe=false action=block reason=size_limit time=${Date.now() - startTime}ms`);
     }
-    return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
+    return sanitizeFileWriteResult(internalResult, requestId, effective_session_id, 'scan_file_write');
   }
 
   const controller = new AbortController();
@@ -214,10 +230,13 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
           content: input.path,
           content_type: 'file_path',
           context: {
-            session_id: getSessionId(),
-            agent_id: getAgentId(),
+            // Session identity — caller-supplied value wins; the MCP client's
+            // process-level SESSION_ID / AGENT_ID are fallbacks only.
+            session_id: effective_session_id,
+            agent_id: (input as any).agent_id || getAgentId(),
             parent_agent_id: (input as any).parent_agent_id || '',
             task_chain: (input as any).task_chain || '',
+            // Server-managed integrity field — cannot be overridden by caller.
             source_application: 'shrike-mcp',
           },
         }),
@@ -234,7 +253,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       } else {
         console.error(`[file] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
+      return sanitizeFileWriteResult(internalResult, requestId, effective_session_id, 'scan_file_write');
     }
 
     const pathData = await pathResponse.json() as BackendSpecializedResponse;
@@ -261,10 +280,13 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
           content_type: 'file_content',
           context: {
             content: input.content,
-            session_id: getSessionId(),
-            agent_id: getAgentId(),
+            // Session identity — caller-supplied value wins; the MCP client's
+            // process-level SESSION_ID / AGENT_ID are fallbacks only.
+            session_id: effective_session_id,
+            agent_id: (input as any).agent_id || getAgentId(),
             parent_agent_id: (input as any).parent_agent_id || '',
             task_chain: (input as any).task_chain || '',
+            // Server-managed integrity field — cannot be overridden by caller.
             source_application: 'shrike-mcp',
           },
         }),
@@ -282,7 +304,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
       } else {
         console.error(`[file] ${requestId} safe=false action=block reason=backend_error time=${Date.now() - startTime}ms`);
       }
-      return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
+      return sanitizeFileWriteResult(internalResult, requestId, effective_session_id, 'scan_file_write');
     }
 
     const contentData = await contentResponse.json() as BackendSpecializedResponse;
@@ -326,6 +348,14 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
         fileExtension,
       },
       approvalInfo: contentData.approval_info || pathData.approval_info,
+      // Session state is identical on path + content responses within one
+      // scanFileWrite call — both requests carry the same session_id/agent_id
+      // and hit the correlator on the same turn. Prefer content's when both
+      // present to keep parity with approvalInfo's precedence.
+      sessionState: contentData.session_state || pathData.session_state,
+      refuseTier: contentData.refuse_tier || pathData.refuse_tier,
+      recovery: contentData.recovery || pathData.recovery,
+      contentType: contentData.content_type || pathData.content_type,
     };
 
     // Log scan result
@@ -336,7 +366,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     }
 
     // Return sanitized response (protects IP)
-    return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
+    return sanitizeFileWriteResult(internalResult, requestId, effective_session_id, 'scan_file_write');
 
   } catch (error) {
     clearTimeout(timeoutId);
@@ -358,7 +388,7 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     } else {
       console.error(`[file] ${requestId} safe=false action=block reason=error time=${Date.now() - startTime}ms`);
     }
-    return sanitizeFileWriteResult(internalResult, requestId, 'scan_file_write');
+    return sanitizeFileWriteResult(internalResult, requestId, effective_session_id, 'scan_file_write');
   }
 }
 
@@ -399,6 +429,8 @@ Checks:
 - Malicious code patterns (reverse shells, fork bombs)
 
 Enterprise context: Prevents agents from accidentally writing credentials to logs, committing secrets to repositories, or overwriting system files.
+
+SESSION QUARANTINE (act plane): This tool is scan_class="act" and quarantine_gated=true. When threat_type is "session_locked", the session's accumulated risk from earlier turns has crossed the quarantine threshold. This tool refuses to authorize the requested side effect on that session; the detection cascade is skipped. Recovery: rotate to a new session_id (MCP 4.0.x auto-rotates on this verdict; manual callers can pass a fresh session_id in the tool arguments). reset_session is admin-restricted at this risk tier to preserve the correlation trail. The observe-plane tools (scan_prompt, scan_response) remain available — use them to inspect the payload you were about to send.
 
 ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOCKING the file operation. Do NOT write unscanned content.`,
   inputSchema: {
@@ -442,5 +474,17 @@ ERROR HANDLING: If this tool returns an error or is unavailable, default to BLOC
     destructiveHint: false,
     idempotentHint: true,
     openWorldHint: true,
+  },
+  
+  // Shrike governance-plane classification. Placed in _meta (MCP's
+  // explicit extension slot) rather than annotations, because
+  // ToolAnnotationsSchema uses Zod $strip mode and drops unknown
+  // fields at tools/list serialization. _meta is z.ZodRecord and
+  // preserves arbitrary keys through the wire. Keys are prefixed with
+  // 'shrike/' to namespace against other extensions.
+  _meta: {
+    'shrike/scan_class': 'act',
+    'shrike/quarantine_gated': true,
+    'shrike/contract_version': '2026-07-03',
   },
 };

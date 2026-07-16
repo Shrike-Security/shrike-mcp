@@ -81,6 +81,15 @@ describe('responseFormatter', () => {
       expect(normalizeThreatType('PROMPT_INJECTION')).toBe('prompt_injection');
       expect(normalizeThreatType('Jailbreak')).toBe('jailbreak');
     });
+
+    // 2026-07-01 U2 regression: backend Q1 quarantine gate emits threat_type
+    // "session_locked" when accumulated L9 risk >= 0.8. Prior to this fix
+    // the client had no mapping for it, so the gate's verdict silently
+    // transmuted to "unknown" and the user saw the generic guidance rather
+    // than the session-quarantine message. Never regress.
+    it('should map session_locked from the Q1 quarantine gate', () => {
+      expect(normalizeThreatType('session_locked')).toBe('session_locked');
+    });
   });
 
   describe('getGuidance', () => {
@@ -173,7 +182,11 @@ describe('responseFormatter', () => {
           expect(sanitized.approval_context.action_summary).toContain('DELETE FROM');
           expect(sanitized.approval_context.expires_in_seconds).toBe(1800);
           expect(sanitized.agent_instruction).toContain('HOLD');
-          expect(sanitized.agent_instruction).toContain('Do NOT proceed');
+          // Case-insensitive "do not proceed" — 2026-07-01 enforcement_severity
+          // rework introduced advisory/blocking language that phrases the
+          // clause mid-sentence, so the D is lowercase where it once
+          // opened a new sentence. Both variants preserve the meaning.
+          expect(sanitized.agent_instruction.toLowerCase()).toContain('do not proceed');
           expect(sanitized.user_message).toContain('appr-uuid-123');
           expect(sanitized.user_message).toContain('30 minutes');
           expect(sanitized.audit.scan_id).toBe(requestId);
@@ -182,7 +195,7 @@ describe('responseFormatter', () => {
         }
       });
 
-      it('should return require_approval when safe=false but approvalInfo present (SHRIKE-201 block-override)', () => {
+      it('should return require_approval when safe=false but approvalInfo present (block-override)', () => {
         const blockOverrideApprovalInfo = {
           ...approvalInfo,
           threat_type: 'data_exfiltration',
@@ -220,7 +233,7 @@ describe('responseFormatter', () => {
 
         const sanitized = sanitizeScanResult(internalResult, requestId);
 
-        // SHRIKE-201: block-override routes to require_approval
+        // block-override routes to require_approval
         expect(sanitized.blocked).toBe(true);
         expect(sanitized.action).toBe('require_approval');
         if (sanitized.action === 'require_approval') {
@@ -524,6 +537,9 @@ describe('responseFormatter', () => {
 
       // Should have obfuscated fields
       expect(sanitized.blocked).toBe(true);
+      // MCP wire is a superset of the SDK contract — safe is the inverse of
+      // blocked and must be present so SDK-shape parsers work verbatim.
+      expect(sanitized.safe).toBe(false);
       expect(sanitized.request_id).toBe(requestId);
 
       if (sanitized.blocked) {
@@ -536,8 +552,22 @@ describe('responseFormatter', () => {
         expect('policyId' in sanitized).toBe(false);
         expect('matchedPattern' in sanitized).toBe(false);
         expect('llmAnalysis' in sanitized).toBe(false);
-        expect('violations' in sanitized).toBe(false);
         expect('performance' in sanitized).toBe(false);
+
+        // Should have sanitized violations[] — SDK-shape mirror.
+        // Attribution (policyId/policyName/matchedPattern/detectedBy) MUST NOT
+        // appear inside the per-item entries either.
+        expect(Array.isArray(sanitized.violations)).toBe(true);
+        expect(sanitized.violations).toHaveLength(1);
+        const v = sanitized.violations![0];
+        expect(v.threat_type).toBe('prompt_injection');
+        expect(v.owasp_category).toBe('LLM01');
+        expect(v.severity).toBe('high');
+        expect('policyId' in v).toBe(false);
+        expect('policyName' in v).toBe(false);
+        expect('matchedPattern' in v).toBe(false);
+        expect('detectedBy' in v).toBe(false);
+        expect('confidence' in v).toBe(false);
       }
     });
 
@@ -691,10 +721,10 @@ describe('responseFormatter', () => {
   });
 
   // =========================================================================
-  // BLOCK-OVERRIDE TESTS (SHRIKE-201)
+  // BLOCK-OVERRIDE TESTS
   // =========================================================================
 
-  describe('block-override approval (SHRIKE-201)', () => {
+  describe('block-override approval', () => {
     const requestId = 'req_block_override_test';
 
     const blockOverrideApprovalInfo = {
@@ -976,6 +1006,390 @@ describe('responseFormatter', () => {
       const sanitized = sanitizeScanResult(blocklistResult, 'req_test_bl');
       const coverage = (sanitized as any).scan_coverage;
       expect(coverage.detail).toContain('FinishReasonBlocklist');
+    });
+  });
+
+  // MCP wire is a SUPERSET of the SDK contract — SDK-shape parsers
+  // (`if (r.safe) proceed()`, `r.violations.forEach(...)`) must work
+  // verbatim against MCP output alongside MCP-specific affordances
+  // (`blocked`, `action`, `agent_instruction`). See the symmetric-contract principle.
+  describe('SDK-shape superset (safe + violations[])', () => {
+    it('safe is present as the inverse of blocked on allow responses', () => {
+      const allowResult = {
+        safe: true,
+        threatLevel: 'none',
+        confidence: 0,
+        recommendedAction: 'allow' as const,
+        violations: [],
+        performance: { totalScanTimeMs: 10, policiesEvaluated: 0, llmAnalysisUsed: false, cacheHits: 0 },
+      };
+      const sanitized = sanitizeScanResult(allowResult, 'req_superset_allow');
+      expect(sanitized.blocked).toBe(false);
+      expect(sanitized.safe).toBe(true);
+    });
+
+    it('safe=false on block AND require_approval — approval is a refuse verdict', () => {
+      const blockResult = {
+        safe: false,
+        threatLevel: 'high',
+        confidence: 0.95,
+        recommendedAction: 'block' as const,
+        violations: [
+          {
+            threatType: 'prompt_injection',
+            severity: 'high',
+            confidence: 0.95,
+            action: 'block',
+            detectedBy: 'regex',
+            message: 'Instruction override attempt',
+            policyId: 'pol-inj-01',
+            policyName: 'Prompt Injection Policy',
+            matchedPattern: 'ignore previous',
+          },
+        ],
+        performance: { totalScanTimeMs: 100, policiesEvaluated: 10, llmAnalysisUsed: false, cacheHits: 0 },
+      };
+      const blocked = sanitizeScanResult(blockResult, 'req_superset_block');
+      expect(blocked.blocked).toBe(true);
+      expect(blocked.safe).toBe(false);
+
+      const approvalResult = {
+        ...blockResult,
+        approvalInfo: {
+          requires_approval: true,
+          approval_id: 'appr-1',
+          approval_level: 'edge',
+          action_summary: 'test',
+          policy_name: 'Test Policy',
+          expires_in_seconds: 900,
+        },
+      };
+      const approval = sanitizeScanResult(approvalResult, 'req_superset_approval');
+      expect(approval.blocked).toBe(true);
+      expect(approval.safe).toBe(false);
+    });
+
+    it('violations[] carries SDK-shape per-item entries with attribution stripped', () => {
+      const blockResult = {
+        safe: false,
+        threatLevel: 'high',
+        confidence: 0.95,
+        recommendedAction: 'block' as const,
+        violations: [
+          {
+            threatType: 'prompt_injection',
+            severity: 'high',
+            confidence: 0.95,
+            action: 'block',
+            detectedBy: 'regex',
+            message: 'Instruction override attempt',
+            policyId: 'pol-inj-01',
+            policyName: 'Prompt Injection Policy',
+            matchedPattern: 'ignore previous',
+          },
+          {
+            threatType: 'data_exfiltration',
+            severity: 'medium',
+            confidence: 0.85,
+            action: 'block',
+            detectedBy: 'llm_analyzer',
+            message: 'Secondary exfil signal',
+            policyId: 'pol-exfil-01',
+            policyName: 'Data Exfil Policy',
+            matchedPattern: 'system prompt',
+          },
+        ],
+        performance: { totalScanTimeMs: 100, policiesEvaluated: 10, llmAnalysisUsed: false, cacheHits: 0 },
+      };
+      const sanitized = sanitizeScanResult(blockResult, 'req_superset_violations');
+      expect(Array.isArray(sanitized.violations)).toBe(true);
+      expect(sanitized.violations).toHaveLength(2);
+
+      const [primary, secondary] = sanitized.violations!;
+      // Kept fields — SDK-shape contract
+      expect(primary.threat_type).toBe('prompt_injection');
+      expect(primary.owasp_category).toBe('LLM01');
+      expect(primary.severity).toBe('high');
+      expect(primary.user_message).toBe('Instruction override attempt');
+      expect(secondary.threat_type).toBe('data_exfiltration');
+      expect(secondary.owasp_category).toBe('LLM02');
+
+      // Attribution stripped — provider-only per the dashboard IP boundary
+      for (const v of sanitized.violations!) {
+        expect('policyId' in v).toBe(false);
+        expect('policyName' in v).toBe(false);
+        expect('matchedPattern' in v).toBe(false);
+        expect('detectedBy' in v).toBe(false);
+        expect('confidence' in v).toBe(false);
+      }
+    });
+
+    it('specialized scanners carry safe + violations[] symmetric with general', () => {
+      const sqlBlockResult = {
+        safe: false,
+        threatLevel: 'high',
+        confidence: 0.9,
+        recommendedAction: 'block' as const,
+        issues: [
+          {
+            type: 'sql_injection',
+            severity: 'high',
+            message: 'Tautology injection detected',
+            pattern: 'OR 1=1',  // Attribution — must be stripped
+            position: 24,        // Attribution — must be stripped
+          },
+        ],
+        metadata: { scanTimeMs: 50 },
+      };
+      const sanitized = sanitizeSQLResult(sqlBlockResult, 'req_superset_sql');
+      expect(sanitized.blocked).toBe(true);
+      expect(sanitized.safe).toBe(false);
+      expect(Array.isArray(sanitized.violations)).toBe(true);
+      expect(sanitized.violations).toHaveLength(1);
+      const v = sanitized.violations![0];
+      expect(v.threat_type).toBe('sql_injection');
+      expect(v.owasp_category).toBe('LLM05');
+      expect('pattern' in v).toBe(false);
+      expect('position' in v).toBe(false);
+      expect('location' in v).toBe(false);
+    });
+
+    it('violations[] absent on clean allow, present on block', () => {
+      const clean = {
+        safe: true,
+        threatLevel: 'none',
+        confidence: 0,
+        recommendedAction: 'allow' as const,
+        violations: [],
+        performance: { totalScanTimeMs: 5, policiesEvaluated: 0, llmAnalysisUsed: false, cacheHits: 0 },
+      };
+      const s = sanitizeScanResult(clean, 'req_clean');
+      expect(s.safe).toBe(true);
+      // Empty violations[] should NOT be surfaced — spread is guarded so the
+      // field is absent on genuinely clean responses.
+      expect('violations' in s).toBe(false);
+    });
+  });
+
+  // Regression fence for the 2026-07-08 Claude Desktop A3 findings — scope-Tier-1
+  // and other on_safe approvals must surface threat classification in
+  // approval_context, and the user_message must render sensibly when the backend
+  // has not (yet) created an approval record (no approval_id, no expires_in_seconds).
+  describe('approval response — threat forwarding + defensive rendering', () => {
+    const baseSafeResult = {
+      safe: true,
+      threatLevel: 'none',
+      confidence: 0,
+      recommendedAction: 'allow' as const,
+      violations: [],
+      performance: { totalScanTimeMs: 10, policiesEvaluated: 0, llmAnalysisUsed: false, cacheHits: 0 },
+    };
+
+    it('forwards threat_type/severity/owasp on non-block-override approvals (scope-Tier-1 shape)', () => {
+      const scopeApprovalResult = {
+        ...baseSafeResult,
+        approvalInfo: {
+          requires_approval: true,
+          // Deliberately no approval_id / expires_in_seconds — Tier 1 scope
+          // short-circuit does not yet create real approval records.
+          approval_id: undefined as unknown as string,
+          approval_level: 'customer',
+          action_summary: "This tool call is outside the agent's declared scope. Approval required to proceed.",
+          policy_name: 'Security Policy',
+          expires_in_seconds: undefined as unknown as number,
+          // Threat classification comes across on the ApprovalInfo, no
+          // original_action="block" — this is the diagnostic marker.
+          threat_type: 'scope_violation',
+          severity: 'high',
+          owasp_category: 'LLM06',
+          enforcement_severity: 'blocking' as const,
+        },
+      };
+      const sanitized = sanitizeScanResult(scopeApprovalResult, 'req_scope_approval');
+      expect(sanitized.action).toBe('require_approval');
+      if (sanitized.action === 'require_approval') {
+        // Forwarded — the pre-fix code only wired these on block-override.
+        expect(sanitized.approval_context.threat_type).toBe('scope_violation');
+        expect(sanitized.approval_context.owasp_category).toBe('LLM06');
+        expect(sanitized.approval_context.severity).toBe('high');
+        // original_action stays absent on scope events — this field is the
+        // block-override discriminator and must not surface here.
+        expect('original_action' in sanitized.approval_context).toBe(false);
+      }
+    });
+
+    it('renders defensively when approval_id/expires_in_seconds are missing', () => {
+      const missingApproval = {
+        ...baseSafeResult,
+        approvalInfo: {
+          requires_approval: true,
+          approval_id: undefined as unknown as string,
+          approval_level: 'customer',
+          action_summary: 'stuck',
+          policy_name: 'Security Policy',
+          expires_in_seconds: undefined as unknown as number,
+          threat_type: 'scope_violation',
+          severity: 'high',
+          owasp_category: 'LLM06',
+          enforcement_severity: 'blocking' as const,
+        },
+      };
+      const sanitized = sanitizeScanResult(missingApproval, 'req_missing_approval');
+      if (sanitized.action === 'require_approval') {
+        // Pre-fix: user_message contained literal "Approval ID: undefined" and
+        // "NaN minutes". Post-fix: neither substring should appear.
+        expect(sanitized.user_message).not.toContain('undefined');
+        expect(sanitized.user_message).not.toContain('NaN');
+        // And the message must still be actionable — mention the dashboard /
+        // scope adjustment out-of-band path.
+        expect(sanitized.user_message.toLowerCase()).toMatch(/dashboard|policy|scope/);
+      }
+    });
+
+    it('block-override approvals still carry original_action=block + threat context', () => {
+      const blockOverrideResult = {
+        ...baseSafeResult,
+        approvalInfo: {
+          requires_approval: true,
+          approval_id: 'appr_test_1',
+          approval_level: 'admin',
+          action_summary: 'Emergency override request',
+          policy_name: 'Prompt Injection Policy',
+          expires_in_seconds: 1800,
+          threat_type: 'prompt_injection',
+          severity: 'high',
+          owasp_category: 'LLM01',
+          original_action: 'block',
+          enforcement_severity: 'blocking' as const,
+        },
+      };
+      const sanitized = sanitizeScanResult(blockOverrideResult, 'req_block_override');
+      if (sanitized.action === 'require_approval') {
+        expect(sanitized.approval_context.threat_type).toBe('prompt_injection');
+        expect(sanitized.approval_context.owasp_category).toBe('LLM01');
+        expect(sanitized.approval_context.original_action).toBe('block');
+        // Present + finite → real ID + 30 minutes appear verbatim in user_message
+        expect(sanitized.user_message).toContain('appr_test_1');
+        expect(sanitized.user_message).toContain('30 minutes');
+      }
+    });
+
+    // 2026-07-09 consumer review U2 — no-approval_id verdicts must specialize
+    // the agent_instruction to say "do NOT call check_approval" and set
+    // resolution="out_of_band" so integrators branch correctly.
+    it('sets resolution=out_of_band and specializes agent_instruction when no approval_id is minted', () => {
+      const noIdApproval = {
+        ...baseSafeResult,
+        approvalInfo: {
+          requires_approval: true,
+          approval_id: undefined as unknown as string,
+          approval_level: 'customer',
+          action_summary: 'Scope violation',
+          policy_name: 'Security Policy',
+          expires_in_seconds: undefined as unknown as number,
+          threat_type: 'scope_violation',
+          severity: 'high',
+          owasp_category: 'LLM06',
+          enforcement_severity: 'blocking' as const,
+        },
+      };
+      const sanitized = sanitizeScanResult(noIdApproval, 'req_scope_no_id');
+      if (sanitized.action === 'require_approval') {
+        expect(sanitized.resolution).toBe('out_of_band');
+        // Do-NOT-call-check_approval directive is the key U2 fix
+        expect(sanitized.agent_instruction).toContain('Do NOT call check_approval');
+        expect(sanitized.agent_instruction.toLowerCase()).toMatch(/out-of-band|dashboard|policy|scope/);
+      }
+    });
+
+    it('sets resolution=in_band on in-band approvals with approval_id', () => {
+      const inBandApproval = {
+        ...baseSafeResult,
+        approvalInfo: {
+          requires_approval: true,
+          approval_id: 'appr_test_in_band',
+          approval_level: 'admin',
+          action_summary: 'Elevated action',
+          policy_name: 'Data Egress Policy',
+          expires_in_seconds: 600,
+          threat_type: 'data_exfiltration',
+          severity: 'high',
+          owasp_category: 'LLM02',
+          enforcement_severity: 'blocking' as const,
+        },
+      };
+      const sanitized = sanitizeScanResult(inBandApproval, 'req_in_band');
+      if (sanitized.action === 'require_approval') {
+        expect(sanitized.resolution).toBe('in_band');
+        // In-band path keeps the "Wait for the user to instruct you to check
+        // the approval status using check_approval" directive.
+        expect(sanitized.agent_instruction).toContain('check_approval');
+        expect(sanitized.agent_instruction).not.toContain('Do NOT call check_approval');
+      }
+    });
+  });
+
+  // 2026-07-09 consumer review U4 — per-violation user_message must be real
+  // text (not the placeholder "Security Policy" or the empty string) so the
+  // multi-violation surface is scannable in a UI.
+  describe('violation user_message hygiene', () => {
+    it('replaces the "Security Policy" placeholder with per-threat text', () => {
+      const resultWithPlaceholderMessages = {
+        safe: false,
+        threatLevel: 'critical' as const,
+        confidence: 0.95,
+        recommendedAction: 'block' as const,
+        violations: [
+          {
+            threatType: 'data_exfiltration',
+            severity: 'critical' as const,
+            action: 'block',
+            message: 'Security Policy', // Placeholder that leaked from backend
+          },
+          {
+            threatType: 'prompt_injection',
+            severity: 'critical' as const,
+            action: 'block',
+            message: '', // Empty backend message
+          },
+        ],
+        performance: { totalScanTimeMs: 12, policiesEvaluated: 2, llmAnalysisUsed: false, cacheHits: 0 },
+      };
+      const sanitized = sanitizeScanResult(resultWithPlaceholderMessages, 'req_placeholder');
+      if (sanitized.action === 'block' && sanitized.violations) {
+        for (const v of sanitized.violations) {
+          expect(v.user_message).toBeDefined();
+          expect(v.user_message?.toLowerCase()).not.toBe('security policy');
+          expect(v.user_message).not.toBe('');
+        }
+        // Specific threat-type mappings
+        const exfil = sanitized.violations.find((v) => v.threat_type === 'data_exfiltration');
+        expect(exfil?.user_message).toMatch(/extraction|data/i);
+        const inj = sanitized.violations.find((v) => v.threat_type === 'prompt_injection');
+        expect(inj?.user_message).toMatch(/instruction|injection|override/i);
+      }
+    });
+
+    it('preserves a real backend-provided violation message when non-placeholder', () => {
+      const resultWithRealMessage = {
+        safe: false,
+        threatLevel: 'high' as const,
+        confidence: 0.8,
+        recommendedAction: 'block' as const,
+        violations: [
+          {
+            threatType: 'data_exfiltration',
+            severity: 'high' as const,
+            action: 'block',
+            message: 'Attempt to disclose the system prompt via imperative override',
+          },
+        ],
+        performance: { totalScanTimeMs: 8, policiesEvaluated: 1, llmAnalysisUsed: false, cacheHits: 0 },
+      };
+      const sanitized = sanitizeScanResult(resultWithRealMessage, 'req_real_msg');
+      if (sanitized.action === 'block' && sanitized.violations) {
+        expect(sanitized.violations[0].user_message).toContain('system prompt');
+      }
     });
   });
 });
