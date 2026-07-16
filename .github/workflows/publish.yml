@@ -21,7 +21,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Node >= 22.14.0 is REQUIRED for npm OIDC trusted publishing.
+          # Node 20 completes the token exchange but the registry still 403s
+          # the PUT. Node 24 satisfies the requirement.
+          node-version: '24'
           cache: 'npm'
 
       - name: Upgrade npm (OIDC trusted publisher requires npm 11.5.1+)
