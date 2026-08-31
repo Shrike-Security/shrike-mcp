@@ -45,11 +45,20 @@ jobs:
       - name: Authenticate (GitHub OIDC — proves org ownership)
         run: mcp-publisher login github-oidc
 
-      - name: Validate server.json (schema + ownership, no write)
-        run: mcp-publisher publish --dry-run
-
+      # NOTE: mcp-publisher's `publish --dry-run` is NOT a no-op with this CLI
+      # build — it performs the real publish. So we run a single publish and
+      # treat "duplicate version" as success (idempotent re-runs of an unchanged
+      # server.json version should not fail the workflow).
       - name: Publish to the MCP Registry
-        run: mcp-publisher publish
+        run: |
+          set +e
+          out="$(mcp-publisher publish 2>&1)"; code=$?
+          echo "$out"
+          if [ $code -ne 0 ] && echo "$out" | grep -qi "duplicate version"; then
+            echo "::notice::Version already present in the registry — nothing to publish."
+            exit 0
+          fi
+          exit $code
 
       - name: Verify the registry entry
         run: |
