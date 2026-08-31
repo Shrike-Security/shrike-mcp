@@ -1,0 +1,59 @@
+name: Publish to MCP Registry (OIDC)
+
+# Publishes server.json to the official MCP Registry
+# (registry.modelcontextprotocol.io) using GitHub Actions OIDC.
+#
+# Why OIDC instead of `mcp-publisher login github` (device flow):
+# this workflow runs INSIDE Shrike-Security/shrike-mcp, so its OIDC identity IS
+# the org. The registry authorizes the `io.github.Shrike-Security/*` namespace
+# structurally — no personal access token, no org OAuth-app approval, no
+# membership-visibility settings to fight (all of which blocked the CLI path).
+#
+# Prereqs (already true):
+#   - server.json at repo root, name = io.github.Shrike-Security/shrike-mcp
+#   - the npm package `shrike-mcp` at server.json's version is published AND
+#     carries a matching `mcpName` field (ownership marker). The registry
+#     verifies both before accepting the entry.
+#
+# Run: Actions tab -> "Publish to MCP Registry (OIDC)" -> Run workflow.
+
+on:
+  workflow_dispatch:
+  # Also publish automatically whenever a GitHub Release is published, so the
+  # registry version can never drift from the tagged release again.
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write   # REQUIRED: lets the job mint the OIDC token mcp-publisher uses
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar -xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+          mcp-publisher --version || true
+
+      - name: Authenticate (GitHub OIDC — proves org ownership)
+        run: mcp-publisher login github-oidc
+
+      - name: Validate server.json (schema + ownership, no write)
+        run: mcp-publisher publish --dry-run
+
+      - name: Publish to the MCP Registry
+        run: mcp-publisher publish
+
+      - name: Verify the registry entry
+        run: |
+          set -euo pipefail
+          echo "Current registry entry:"
+          curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=shrike" \
+            | grep -o '"version":"[^"]*"' | head -5

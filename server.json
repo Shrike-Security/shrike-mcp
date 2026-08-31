@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Shrike-Security/shrike-mcp",
-  "description": "AI governance for agents — prompt evaluation, SQL injection detection, PII isolation, risk intelligence. Multi-layered cognitive pipeline.",
+  "description": "Governs what AI agents do: tool calls, SQL, commands, files checked against policy before they run.",
   "title": "Shrike",
   "repository": {
     "url": "https://github.com/Shrike-Security/shrike-mcp",
     "source": "github"
   },
-  "version": "3.7.0",
+  "version": "4.0.2",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "shrike-mcp",
-      "version": "3.7.0",
+      "version": "4.0.2",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

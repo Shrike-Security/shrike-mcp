@@ -6,7 +6,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "shrike-mcp": "./dist/index.js"
+    "shrike-mcp": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
