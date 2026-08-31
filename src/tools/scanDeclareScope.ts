@@ -36,6 +36,8 @@ export interface ScanDeclareScopeInput {
   allowed_tools: string[];
   forbidden_tools?: string[];
   max_duration_seconds?: number;
+  /** Action ceiling: scans passed under this scope before further actions are held for approval. Re-declaring resets the count. */
+  max_actions?: number;
   expires_at?: string;
 }
 
@@ -46,6 +48,7 @@ export interface ScanDeclareScopeResult {
   allowed_tools?: string[];
   forbidden_tools?: string[];
   max_duration_seconds?: number;
+  max_actions?: number;
   expires_at?: string;
   active_until?: string;
   expired?: boolean;
@@ -77,6 +80,9 @@ export async function scanDeclareScope(
     if (input.forbidden_tools) body.forbidden_tools = input.forbidden_tools;
     if (typeof input.max_duration_seconds === 'number') {
       body.max_duration_seconds = input.max_duration_seconds;
+    }
+    if (typeof input.max_actions === 'number') {
+      body.max_actions = input.max_actions;
     }
     if (input.expires_at) body.expires_at = input.expires_at;
 
@@ -124,9 +130,11 @@ WHEN TO USE:
 INPUTS:
 - agent_id (required): the identity you want scoped; same string you'll pass in context.agent_id on subsequent scan calls.
 - allowed_tools (required): array of exact tool names. Use ["*"] to allow any tool.
-- forbidden_tools (optional): array of tool names that this agent must never call; wins over allowed_tools.
+  VOCABULARY: for actions scanned through this MCP server, the tool name is the scan CONTENT TYPE, not your framework's tool label — "command" (scan_command), "sql" (scan_sql_query), "file_path"/"file_content" (scan_file_write), "web_search", "a2a_message", "agent_card", "mcp_schema", "rag_context". Declaring names like "Bash" or "git" will NOT match; a scan_command call is checked as "command". Callers on the REST/SDK path can also set request_metadata.tool_name explicitly, and then THAT string is what must appear here.
+- forbidden_tools (optional): array of tool names that this agent must never call; wins over allowed_tools. Same vocabulary as allowed_tools.
 - purpose (optional): human-readable description, surfaces in dashboard + audit logs.
 - max_duration_seconds (optional): TTL relative to created_at.
+- max_actions (optional): action ceiling — how many scans this scope passes before further actions are held for approval with threat_type "resource_exhaustion". Re-declaring the scope resets the count. Counting is per backend instance, so treat the ceiling as a tripwire (it can overshoot slightly under horizontal scaling), not an exact meter.
 - expires_at (optional, ISO-8601): absolute expiry; whichever bound fires first wins.
 
 WHAT IT DOES NOT DO:
@@ -149,7 +157,7 @@ ERROR HANDLING: Failures are non-blocking. The tool returns { error } so the age
       allowed_tools: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Exact tool names permitted. Use ["*"] for any tool.',
+        description: 'Exact tool names permitted, in scan content-type vocabulary ("command", "sql", "file_path", "file_content", "web_search", "a2a_message", "agent_card", "mcp_schema", "rag_context") — not framework tool labels. Use ["*"] for any tool.',
       },
       forbidden_tools: {
         type: 'array',
@@ -159,6 +167,10 @@ ERROR HANDLING: Failures are non-blocking. The tool returns { error } so the age
       max_duration_seconds: {
         type: 'integer',
         description: 'Optional TTL in seconds relative to created_at.',
+      },
+      max_actions: {
+        type: 'integer',
+        description: 'Optional action ceiling: scans passed under this scope before further actions are held for approval. Re-declaring resets the count.',
       },
       expires_at: {
         type: 'string',

@@ -736,7 +736,7 @@ describe('responseFormatter', () => {
       expires_in_seconds: 900,
       threat_type: 'destructive_operation',
       severity: 'high',
-      owasp_category: 'LLM06',
+      owasp_category: 'LLM03',
       risk_factors: ['destructive_operation: SQL Destructive Op (severity: HIGH, confidence: 92%)'],
       original_action: 'block',
     };
@@ -759,7 +759,7 @@ describe('responseFormatter', () => {
       if (sanitized.action === 'require_approval') {
         expect(sanitized.approval_context.original_action).toBe('block');
         expect(sanitized.approval_context.threat_type).toBe('destructive_operation');
-        expect(sanitized.approval_context.owasp_category).toBe('LLM06');
+        expect(sanitized.approval_context.owasp_category).toBe('LLM03');
         expect(sanitized.approval_context.risk_factors).toHaveLength(1);
         expect(sanitized.agent_instruction).toContain('BLOCKED');
         expect(sanitized.user_message).toContain('blocked');
@@ -1148,7 +1148,7 @@ describe('responseFormatter', () => {
       expect(sanitized.violations).toHaveLength(1);
       const v = sanitized.violations![0];
       expect(v.threat_type).toBe('sql_injection');
-      expect(v.owasp_category).toBe('LLM05');
+      expect(v.owasp_category).toBe('LLM10');
       expect('pattern' in v).toBe(false);
       expect('position' in v).toBe(false);
       expect('location' in v).toBe(false);
@@ -1201,7 +1201,7 @@ describe('responseFormatter', () => {
           // original_action="block" — this is the diagnostic marker.
           threat_type: 'scope_violation',
           severity: 'high',
-          owasp_category: 'LLM06',
+          owasp_category: 'LLM03',
           enforcement_severity: 'blocking' as const,
         },
       };
@@ -1210,7 +1210,7 @@ describe('responseFormatter', () => {
       if (sanitized.action === 'require_approval') {
         // Forwarded — the pre-fix code only wired these on block-override.
         expect(sanitized.approval_context.threat_type).toBe('scope_violation');
-        expect(sanitized.approval_context.owasp_category).toBe('LLM06');
+        expect(sanitized.approval_context.owasp_category).toBe('LLM03');
         expect(sanitized.approval_context.severity).toBe('high');
         // original_action stays absent on scope events — this field is the
         // block-override discriminator and must not surface here.
@@ -1230,7 +1230,7 @@ describe('responseFormatter', () => {
           expires_in_seconds: undefined as unknown as number,
           threat_type: 'scope_violation',
           severity: 'high',
-          owasp_category: 'LLM06',
+          owasp_category: 'LLM03',
           enforcement_severity: 'blocking' as const,
         },
       };
@@ -1289,7 +1289,7 @@ describe('responseFormatter', () => {
           expires_in_seconds: undefined as unknown as number,
           threat_type: 'scope_violation',
           severity: 'high',
-          owasp_category: 'LLM06',
+          owasp_category: 'LLM03',
           enforcement_severity: 'blocking' as const,
         },
       };

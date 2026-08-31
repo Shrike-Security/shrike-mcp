@@ -308,7 +308,7 @@ function buildDashboardRequiredResponse(requestId: string, serverMsg: string): S
     blocked: true,
     action: 'block',
     threat_type: 'scan_error',
-    owasp_category: 'LLM08',
+    owasp_category: 'LLM03', // Excessive Agency (OWASP LLM 2026): approval/authority gating
     severity: 'high',
     confidence: 'high',
     guidance: serverMsg,
@@ -331,7 +331,7 @@ function buildCooldownResponse(requestId: string, serverMsg: string): SanitizedR
     blocked: true,
     action: 'block',
     threat_type: 'scan_error',
-    owasp_category: 'LLM08',
+    owasp_category: 'LLM03', // Excessive Agency (OWASP LLM 2026): approval/authority gating
     severity: 'medium',
     confidence: 'high',
     guidance: serverMsg,
@@ -354,7 +354,7 @@ function buildSelfApprovalBlockedResponse(requestId: string): SanitizedResponse 
     blocked: true,
     action: 'block',
     threat_type: 'scan_error',
-    owasp_category: 'LLM08',
+    owasp_category: 'LLM03', // Excessive Agency (OWASP LLM 2026): approval/authority gating
     severity: 'high',
     confidence: 'high',
     guidance: 'Self-approval is not permitted. A different authorized user must review and decide on this approval.',

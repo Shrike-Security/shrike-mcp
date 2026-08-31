@@ -4,12 +4,26 @@ All notable changes to shrike-mcp will be documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [4.0.2] - 2026-08-31
+
+### Changed
+- **Discoverability keywords.** Added `mcp-server`, `modelcontextprotocol`, and `cline` to the npm keywords so the package surfaces in MCP registry and directory search. Metadata-only.
+
+### Fixed
+- **Clarified npm-only distribution.** An unrelated third-party package holds the name `shrike-mcp` on PyPI, so a user guessing `pip install shrike-mcp` would install the wrong package. The Quick Start now states the server is npm-only (`npx shrike-mcp`, Node.js required) and points Python *code* integration at the Python SDK (`pip install shrike-guard`). Documentation-only.
+
+## [4.0.1] - 2026-07-16
+
+### Fixed
+- Corrected the tool-count line in the 4.0.0 entry below. The shipped surface is **14 tools** (matches `package.json` and the README); the `12 → 11` line recorded only the `get_threat_intel` removal and was never updated after later 4.0.x tools (`scanDeclareScope`, `scanResponse`, `scanMCPSchema`) were added.
+- Reconciled release dating: the 4.0.0 changes were prepared 2026-07-03 and published to npm on 2026-07-16.
+
 ## [4.0.0] - 2026-07-03
 
 ### Removed (BREAKING)
 - **Removed `get_threat_intel` tool.** The tool exposed dashboard-oriented content (pattern lists, ThreatSense learning stats, per-category coverage) to the agent's `tools/list`, where it neither informed nor changed agent decisions in real workflows. Pattern review and threat intelligence oversight belong on the Shrike dashboard, not in the agent-facing MCP surface.
   - **Migration:** agents that previously invoked `get_threat_intel` for session self-inspection should read `sessionStats` fields carried in future scan responses (per the session-state extension in the roadmap). Human threat-intel review is available on the Shrike dashboard admin surface.
-  - Tool count: 12 → 11.
+  - Tool count with this removal: 12 → 11. (Later 4.0.x tools bring the shipped total to **14** — see the 4.0.1 note above and the README.)
 
 ### Added
 - **Automatic client-side SESSION_ID rotation on high-risk / quarantine.** When a scan response arrives with `threat_type: session_locked` or `session_state.session_risk_score` at/above a configurable threshold, the MCP client emits a `client_session_rotation` record on the triggering response. The record has two shapes depending on session ownership:

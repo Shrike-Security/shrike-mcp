@@ -514,28 +514,35 @@ const THREAT_GUIDANCE: Record<ThreatType, string> = {
 
 /**
  * Maps each threat type to the relevant OWASP LLM Top 10 category.
+ *
+ * Aligned to the OWASP LLM Top 10 2026 edition (adopted 2026-08-05), which
+ * renumbered several categories vs. 2025. This map MUST agree with the
+ * backend's models.MapLegacyThreatTypeToOWASP (single source of truth).
+ * 2026 moves reflected here: Improper Output Handling LLM05→LLM10,
+ * Excessive Agency LLM06→LLM03, System Prompt Leakage LLM07→"Hidden Context
+ * Exposure" LLM08, Unbounded Consumption LLM10→LLM06, Misinformation LLM09→LLM07.
  */
 const OWASP_MAPPING: Record<ThreatType, string> = {
   prompt_injection: 'LLM01',
   jailbreak: 'LLM01',
-  system_prompt_leak: 'LLM07',
+  system_prompt_leak: 'LLM08', // 2026: Hidden Context Exposure (was LLM07 System Prompt Leakage)
   data_exfiltration: 'LLM02',
-  sql_injection: 'LLM05',
-  path_traversal: 'LLM05',
+  sql_injection: 'LLM10', // 2026: Improper Output Handling (was LLM05)
+  path_traversal: 'LLM10', // 2026: Improper Output Handling
   secrets_exposure: 'LLM02',
   pii_exposure: 'LLM02',
-  blocked_domain: 'LLM05',
-  toxic_content: 'LLM05',
-  toxicity: 'LLM05',
+  blocked_domain: 'LLM10', // 2026: Improper Output Handling
+  toxic_content: 'LLM07', // 2026: Misinformation (model-produced harmful text)
+  toxicity: 'LLM07', // 2026: Misinformation
   multi_turn_attack: 'LLM01', // multi-turn correlation is a prompt-injection-class concern
   session_locked: 'LLM01', // Quarantine is a session-level extension of the prompt-injection category
-  malicious_code: 'LLM05',
+  malicious_code: 'LLM10', // 2026: Improper Output Handling (was LLM05)
   harmful_intent: 'LLM01',
   social_engineering: 'LLM01',
-  privilege_escalation: 'LLM06',
-  destructive_operation: 'LLM06',
+  privilege_escalation: 'LLM03', // 2026: Excessive Agency (was LLM06)
+  destructive_operation: 'LLM03', // 2026: Excessive Agency (was LLM06)
   scan_error: 'LLM01',
-  size_limit_exceeded: 'LLM10',
+  size_limit_exceeded: 'LLM06', // 2026: Unbounded Consumption (was LLM10)
   unknown: 'LLM01',
 };
 

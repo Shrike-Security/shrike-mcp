@@ -6,7 +6,7 @@
  *
  * Tool Selection Modes:
  *   Mode A (Selective): SHRIKE_TOOLS=scan_prompt,scan_sql_query (env) or X-Shrike-Tools header (HTTP)
- *   Mode B (All):       Default — all 10 tools register. Backwards compatible.
+ *   Mode B (All):       Default — all 14 tools register. Backwards compatible.
  *   Mode C (Bundled):   SHRIKE_MODE=bundled — single shrike_scan tool. Minimum context footprint.
  */
 
@@ -82,7 +82,7 @@ Usage:
 Environment Variables:
   SHRIKE_API_KEY               API key for authenticated scans (enables LLM layers)
   SHRIKE_BACKEND_URL           Backend API URL (default: https://api.shrikesecurity.com/agent)
-  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 12)
+  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 14)
   SHRIKE_MODE                  Tool mode: bundled (single shrike_scan tool) or omit for normal
   MCP_TRANSPORT                Transport mode: stdio (default) or http
   MCP_PORT                     HTTP server port (default: 8000, used in http mode)
@@ -666,7 +666,9 @@ async function startStdio(): Promise<void> {
 
   const toolCount = config.mode === 'bundled'
     ? '1 (bundled)'
-    : (config.enabledTools ? `${resolveEnabledTools(config.enabledTools).length} (selective)` : '10');
+    : (config.enabledTools
+        ? `${resolveEnabledTools(config.enabledTools).length} (selective)`
+        : `${Object.keys(TOOL_REGISTRY).length}`);
   console.error(`Shrike MCP Server running on stdio transport (${toolCount} tools)`);
 
   // First-run welcome banner for unauthenticated users

@@ -154,7 +154,7 @@ describe('scanSQLQuery', () => {
     expect(result.action).toBe('block');
     if (result.action === 'block') {
       expect(result.threat_type).toBe('sql_injection');
-      expect(result.owasp_category).toBe('LLM05');
+      expect(result.owasp_category).toBe('LLM10');
       expect(result.severity).toBe('critical');
       expect(result.confidence).toBe('high');
       expect(result.guidance).toBeDefined();

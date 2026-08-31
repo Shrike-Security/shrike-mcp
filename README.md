@@ -3,11 +3,10 @@
 [![npm version](https://img.shields.io/npm/v/shrike-mcp.svg)](https://www.npmjs.com/package/shrike-mcp)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
-[![Smithery](https://smithery.ai/badge/shrike-mcp)](https://smithery.ai/server/shrike-mcp)
 
-**AI governance for every AI interaction. 14 MCP tools. 9-layer cognitive pipeline. Works without an API key.**
+**Govern what your AI agents do — every tool call, command, and query checked against your policy before it runs. 14 MCP tools; 9-layer engine. Works without an API key.**
 
-Shrike MCP is the Model Context Protocol server for [Shrike](https://shrikesecurity.com). From employees using ChatGPT to autonomous agents executing code — Shrike evaluates every AI interaction in real-time with tools to scan prompts, responses, SQL queries, file writes, CLI commands, web searches, and agent-to-agent messages. Detects prompt injection, jailbreaks, data leakage, PII exposure, and multi-turn manipulation before they cause harm.
+Shrike MCP is the Model Context Protocol server for [Shrike](https://shrikesecurity.com). It puts a policy checkpoint at the moment an AI agent acts: every tool call, SQL query, file write, CLI command, web search, and agent-to-agent message is evaluated against your policy and **allowed, flagged for approval, or blocked before it executes** — on your terms, independent of your model or cloud. Underneath, a 9-layer engine detects prompt injection, jailbreaks, data leakage, PII exposure, and multi-turn manipulation so those verdicts are accurate.
 
 ## Shrike Platform
 
@@ -20,7 +19,6 @@ This repo is the **MCP server** — one of several ways to integrate:
 | **MCP Server** (this repo) | `npx shrike-mcp` | Claude Desktop, Cursor, Windsurf, Cline |
 | **TypeScript SDK** | `npm install shrike-guard` | OpenAI/Anthropic/Gemini wrapper |
 | **Python SDK** | `pip install shrike-guard` | OpenAI/Anthropic/Gemini wrapper |
-| **Go SDK** | `go get` | Backend services |
 | **REST API** | `POST /agent/scan` | Any language, any stack |
 | **LLM Gateway** | `POST /api/v1/llm/proxy` | Scan prompts and responses between your app and any model provider |
 | **Browser Extension** | Chrome / Edge | Protect employee AI usage (ChatGPT, Claude, Gemini) |
@@ -28,7 +26,7 @@ This repo is the **MCP server** — one of several ways to integrate:
 
 ## Quick Start
 
-**Works immediately — no API key required.** Anonymous usage gets L1-L5 pattern-based detection. Register for free to unlock LLM-powered semantic analysis.
+**Works immediately — no API key required.** Anonymous usage gets L1-L5 pattern-based detection. Register for a free account for a dashboard, higher rate limits, and scan history; LLM-powered semantic analysis (L6-L9) is available on Pro.
 
 **1. Add to your MCP client config:**
 
@@ -60,6 +58,8 @@ This repo is the **MCP server** — one of several ways to integrate:
 ```
 
 Get a free key at [shrikesecurity.com/signup](https://shrikesecurity.com/signup) — instant, no credit card.
+
+> **npm only.** The Shrike MCP server is distributed on npm and runs via `npx shrike-mcp` (Node.js required). There is **no** `pip install shrike-mcp` — an unrelated third-party package happens to hold that name on PyPI. For Python *code* integration, use the Python SDK: `pip install shrike-guard`.
 
 **3. Your agent now has 14 security tools** (9 governance scanners, 1 scope declaration, and 4 session & approval tools). Every prompt, response, and tool call can be scanned before execution.
 
@@ -116,8 +116,8 @@ Every scan runs through the 9-layer cognitive pipeline. Lower layers are sub-mil
 | L1.45a | Encoding bypass detection (Base64, hex, Caesar/Atbash ciphers) | All |
 | L1.45 | Token obfuscation (spaced chars, l33t speak, typoglycemia) | All |
 | L1.455 | Semantic similarity analysis (embedding-based) | All |
-| L6 | Visual text analysis (RTL tricks, visual homoglyphs) | Community+ |
-| L7 | LLM semantic analysis via Vertex AI (zero-day detection) | Community+ |
+| L6 | Visual text analysis (RTL tricks, visual homoglyphs) | Pro+ |
+| L7 | LLM semantic analysis via Vertex AI (zero-day detection) | Pro+ |
 | L8 | Response intelligence (LLM compromise, tonality drift) | Pro+ |
 | L9 | Multi-turn session correlation (7 pattern detectors) | Pro+ |
 
@@ -129,7 +129,7 @@ All 14 tools are available on every tier. Tiers control detection depth and volu
 
 | | Anonymous | Community | Pro | Enterprise |
 |---|---|---|---|---|
-| Detection Layers | L1-L5 | L1-L7 | L1-L9 (full) | L1-L9 (full) |
+| Detection Layers | L1-L5 | L1-L5 | L1-L9 (full) | L1-L9 (full) |
 | API Key | Not needed | Free signup | Paid | Paid |
 | Rate Limit | — | 10/min | 100/min | 1,000/min |
 | Scans/month | — | 1,000 | 25,000 | 1,000,000 |
@@ -139,9 +139,9 @@ All 14 tools are available on every tier. Tiers control detection depth and volu
 
 **Anonymous** (no API key): Pattern-based detection only (L1-L5). Good for evaluation and basic protection.
 
-**Community** (free): Adds LLM-powered semantic analysis (L6-L7). Catches zero-day attacks that evade regex. Register at [shrikesecurity.com/signup](https://shrikesecurity.com/signup).
+**Community** (free): Same L1-L5 pattern-based detection, plus a dashboard, 1,000 scans/month, and audit history. Register at [shrikesecurity.com/signup](https://shrikesecurity.com/signup).
 
-**Pro/Enterprise**: Full pipeline including response intelligence (L8) and multi-turn session correlation (L9).
+**Pro/Enterprise**: Full 9-layer pipeline — adds LLM-powered semantic analysis (L6-L7), response intelligence (L8), and multi-turn session correlation (L9).
 
 ## Compliance
 
@@ -299,7 +299,6 @@ Once the MCP server is connected, try these prompts in Claude or your MCP client
 - [npm](https://www.npmjs.com/package/shrike-mcp) — Package registry
 - [TypeScript SDK](https://github.com/Shrike-Security/shrike-guard-js) — `npm install shrike-guard`
 - [Python SDK](https://github.com/Shrike-Security/shrike-guard-python) — `pip install shrike-guard`
-- [Smithery](https://smithery.ai/server/shrike-mcp) — MCP marketplace listing
 - [GCP Marketplace](https://console.cloud.google.com/marketplace) — Enterprise deployment with committed spend
 
 ## License

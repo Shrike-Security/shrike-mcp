@@ -307,7 +307,7 @@ describe('scanCommand', () => {
           expires_in_seconds: 900,
           threat_type: 'destructive_operation',
           severity: 'critical',
-          owasp_category: 'LLM08',
+          owasp_category: 'LLM03',
           risk_factors: ['production_environment', 'recursive_delete'],
           original_action: 'block',
         },

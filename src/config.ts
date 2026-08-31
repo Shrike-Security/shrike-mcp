@@ -67,7 +67,7 @@ export const config: Config = {
   backendUrl: getEnvOrDefault('SHRIKE_BACKEND_URL', 'https://api.shrikesecurity.com/agent'),
   // API key — set dynamically by KeyRotationManager at startup.
   // For backwards compatibility, falls back to SHRIKE_API_KEY env var when keyProvider is 'env' (default).
-  // Without API key, scans are free tier (L1-L4 regex only)
+  // Without API key, scans run the free tier: L1-L5 deterministic layers only
   // Get your API key at: https://console.shrikesecurity.com/api-keys
   apiKey: null as string | null,
   // Key provider: env (default), file, vault, aws, gcp
@@ -101,7 +101,16 @@ export function logConfig(): void {
   console.error(`  Port: ${config.port} ${config.transport === 'stdio' ? '(unused in stdio mode)' : ''}`);
   console.error(`  Backend URL: ${config.backendUrl}`);
   console.error(`  Key Provider: ${config.keyProvider}`);
-  console.error(`  API Key: ${config.apiKey ? '***' + config.apiKey.slice(-4) + ' (authenticated - full pipeline)' : 'NOT SET (free tier - full pipeline)'}`);
+  // Key providers resolve asynchronously after this banner prints, so a
+  // configured-but-not-yet-loaded key must not be reported as NOT SET.
+  const keyStatus = config.apiKey
+    ? `***${config.apiKey.slice(-4)} (authenticated - full pipeline)`
+    : config.keyProvider === 'env'
+      ? (process.env.SHRIKE_API_KEY
+          ? `***${process.env.SHRIKE_API_KEY.slice(-4)} (validating at startup)`
+          : 'NOT SET (free tier: L1-L5 pattern layers)')
+      : `loading from ${config.keyProvider} provider (validated at startup)`;
+  console.error(`  API Key: ${keyStatus}`);
   console.error(`  Key Poll Interval: ${config.keyPollIntervalMs}ms${config.keyPollIntervalMs === 0 ? ' (disabled)' : ''}`);
   console.error(`  Scan Timeout: ${config.scanTimeoutMs}ms`);
   console.error(`  Rate Limit: ${config.rateLimitPerMinute} req/min`);
@@ -119,6 +128,11 @@ export function logConfig(): void {
 export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    // Channel tag for adoption analytics: the backend records this as
+    // traffic_source so the dashboard can break scans down by integration
+    // (MCP vs SDK vs gateway). Server-side resolveTrafficSource reads this
+    // header; without it every scan falls back to the generic "api" bucket.
+    'X-Traffic-Source': 'mcp',
   };
   const ctx = requestContext.getStore();
   const key = ctx?.apiKey ?? config.apiKey;
