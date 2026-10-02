@@ -337,6 +337,7 @@ function transformBackendResponse(data: BackendResponse, scanTimeMs: number): Sc
   } : undefined;
 
   return {
+    backendScanId: data.scan_id,
     safe: data.safe,
     threatLevel: data.threat_level || 'none',
     confidence: maxConfidence,

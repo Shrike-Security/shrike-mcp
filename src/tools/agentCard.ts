@@ -24,6 +24,9 @@ export interface AgentCardInput {
 }
 
 export interface AgentCardResult {
+  /** The persisted scan row's id, when the backend recorded one. Carried so
+   *  the audit block can name the scan a later report_outcome refers to. */
+  backendScanId?: string;
   safe: boolean;
   threatLevel: string;
   confidence: number;
@@ -61,6 +64,9 @@ export interface AgentCardResult {
 }
 
 interface BackendSpecializedResponse {
+  /** The persisted scan row's id, echoed so a later report_outcome can
+   *  name this scan. Absent on a verdict the backend never recorded. */
+  scan_id?: string;
   safe: boolean;
   threat_type?: string;
   severity?: string;
@@ -183,6 +189,7 @@ export async function scanAgentCard(input: AgentCardInput, customerId: string = 
     }
 
     const internalResult: AgentCardResult = {
+      backendScanId: data.scan_id,
       safe: data.safe,
       threatLevel: mapSeverityToThreatLevel(data.severity),
       confidence: data.confidence || 0.5,

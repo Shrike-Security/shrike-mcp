@@ -30,7 +30,7 @@ export type ThreatType =
   | 'toxic_content'
   | 'toxicity' // legacy alias for toxic_content, kept for back-compat
   | 'multi_turn_attack' // L9 pseudo-category — any multi_turn_* pattern
-  | 'session_locked' // Session-quarantine short-circuit (accumulated L9 risk >= 0.8)
+  | 'session_locked' // Session quarantine: accumulated session risk crossed the lock threshold
   | 'malicious_code'
   | 'harmful_intent'
   | 'social_engineering'
@@ -102,7 +102,7 @@ export interface SessionState {
    */
   risk_breakdown?: RiskBreakdown[];
   /**
-   * True when accumulated L9 risk crossed the lock threshold (>= 0.8) and
+   * True when accumulated session risk crossed the lock threshold and
    * the session is under quarantine. Callers gate retry / rotation logic
    * on this signal. Absent (undefined) is treated as false — omit when the
    * backend did not report a lock state (older backends).
@@ -158,6 +158,9 @@ export interface Recovery {
  * SessionState above.
  */
 export interface AuditBlock {
+  /** The backend scan row's id, so a later report_outcome can name this scan.
+   *  Falls back to this server's request id when the backend returned none,
+   *  which happens only on a fail-closed local verdict that has no row. */
   scan_id: string;
   timestamp: string;
   policy_name?: string;
@@ -170,7 +173,7 @@ export interface AuditBlock {
  * (caller-owned). Discriminated union on `rotated`. See
  * config.SessionRotation for the source of truth on the fields.
  *
- * Two shapes, one per ownership case:
+ * Three shapes. Discriminate on `rotated`, then on `rotation_recommended`:
  *
  *   `rotated: true` (module-owned): the MCP client's fallback SESSION_ID
  *   was in force when the trigger fired. MCP mutated its module SESSION_ID
@@ -181,6 +184,13 @@ export interface AuditBlock {
  *   mutate anything — session lifecycle is the caller's responsibility.
  *   Fields: current_session_id (echoed back), suggested_new_session_id.
  *
+ *   `rotated: false, rotation_recommended: false` (locked): the backend locked
+ *   the session. No new id on either ownership, because minting one sidesteps
+ *   the lock. Fields: current_session_id only.
+ *
+ * Only the first two carry an id, so read `rotation_recommended` before
+ * reaching for `suggested_new_session_id`.
+ *
  * Absent when no rotation trigger fired, which is the vast majority of
  * responses. Integrators can key on the presence of this field to detect
  * "the session risk crossed the threshold on this response" and surface
@@ -189,7 +199,7 @@ export interface AuditBlock {
 export interface ModuleOwnedRotationRecord {
   rotated: true;
   owner: 'mcp_client';
-  reason: 'session_locked' | 'risk_threshold_exceeded';
+  reason: 'risk_threshold_exceeded';
   previous_session_id: string;
   new_session_id: string;
   triggering_risk_score?: number;
@@ -200,14 +210,32 @@ export interface CallerOwnedRotationRecommendationRecord {
   rotated: false;
   rotation_recommended: true;
   owner: 'caller';
-  reason: 'session_locked' | 'risk_threshold_exceeded';
+  reason: 'risk_threshold_exceeded';
   current_session_id: string;
   suggested_new_session_id: string;
   triggering_risk_score?: number;
   configured_threshold?: number;
 }
 
-export type ClientSessionRotation = ModuleOwnedRotationRecord | CallerOwnedRotationRecommendationRecord;
+/**
+ * The locked-session notice. A separate record rather than a looser version of
+ * the two above, because a type that permits `suggested_new_session_id` on a
+ * lock invites a caller to read one.
+ */
+export interface SessionLockedNoticeRecord {
+  rotated: false;
+  rotation_recommended: false;
+  owner: 'mcp_client' | 'caller';
+  reason: 'session_locked';
+  current_session_id: string;
+  triggering_risk_score?: number;
+  configured_threshold?: number;
+}
+
+export type ClientSessionRotation =
+  | ModuleOwnedRotationRecord
+  | CallerOwnedRotationRecommendationRecord
+  | SessionLockedNoticeRecord;
 
 /**
  * Per-item violation shape mirroring the SDK contract
@@ -359,9 +387,9 @@ export interface SanitizedApprovalResponse {
     owasp_category?: string;
     risk_factors?: string[];
     original_action?: string; // "block" when overriding a block verdict
-    // 2026-07-01: Agent-contract signal. "blocking" = park dependent work;
-    // "advisory" = agent may defer this task while waiting. Defaults to
-    // "advisory" pre-launch. See checkApproval.ts + scan.ts descriptions.
+    // Agent-contract signal. "blocking" = park dependent work; "advisory" =
+    // the agent may defer this task while waiting. Defaults to "advisory".
+    // See checkApproval.ts + scan.ts descriptions.
     enforcement_severity?: 'blocking' | 'advisory';
     expected_response_by_seconds?: number;
   };
@@ -515,7 +543,7 @@ const THREAT_GUIDANCE: Record<ThreatType, string> = {
 /**
  * Maps each threat type to the relevant OWASP LLM Top 10 category.
  *
- * Aligned to the OWASP LLM Top 10 2026 edition (adopted 2026-08-05), which
+ * Aligned to the OWASP LLM Top 10 2026 edition, which
  * renumbered several categories vs. 2025. This map MUST agree with the
  * backend's models.MapLegacyThreatTypeToOWASP (single source of truth).
  * 2026 moves reflected here: Improper Output Handling LLM05→LLM10,
@@ -808,8 +836,8 @@ export function normalizeThreatType(internalType: string): ThreatType {
     harmful_content: 'toxic_content',
     // L9 multi-turn pseudo-category — see prefix handling in normalizeThreatType.
     multi_turn_attack: 'multi_turn_attack',
-    // Q1 session-quarantine short-circuit — backend emits this when accumulated
-    // L9 risk >= 0.8. Not a per-turn detection; a session-level verdict.
+    // Session quarantine — the backend emits this when accumulated session
+    // risk crosses the lock threshold. Not a per-turn detection; a session-level verdict.
     session_locked: 'session_locked',
 
     // Data exfiltration (from LLM intent and categories)
@@ -979,6 +1007,9 @@ export function logInternalDetails(entry: InternalLogEntry): void {
  * Internal result type from scan.ts (for type safety)
  */
 interface InternalScanResult {
+  /** The backend scan row's id, when the backend returned one. A fail-closed
+   *  local verdict has no row and so no id; report_outcome needs this one. */
+  backendScanId?: string;
   safe: boolean;
   threatLevel: string;
   confidence: number;
@@ -1029,7 +1060,7 @@ interface InternalScanResult {
     owasp_category?: string;
     risk_factors?: string[];
     original_action?: string;
-    // 2026-07-01: Agent-contract signal (see checkApproval.ts)
+    // Agent-contract signal (see checkApproval.ts)
     enforcement_severity?: 'blocking' | 'advisory';
     expected_response_by_seconds?: number;
   };
@@ -1062,6 +1093,9 @@ interface InternalScanResult {
  * Internal result type from specialized scans (SQL, file, web)
  */
 interface InternalSpecializedResult {
+  /** The backend scan row's id, when the backend returned one. A fail-closed
+   *  local verdict has no row and so no id; report_outcome needs this one. */
+  backendScanId?: string;
   safe: boolean;
   threatLevel: string;
   confidence: number;
@@ -1091,7 +1125,7 @@ interface InternalSpecializedResult {
     owasp_category?: string;
     risk_factors?: string[];
     original_action?: string;
-    // 2026-07-01: Agent-contract signal (see checkApproval.ts)
+    // Agent-contract signal (see checkApproval.ts)
     enforcement_severity?: 'blocking' | 'advisory';
     expected_response_by_seconds?: number;
   };
@@ -1202,7 +1236,7 @@ function buildApprovalResponse(
   requestId: string,
   effective_session_id: string,
   sessionState?: SessionState,
-  governance?: { refuseTier?: RefuseTier; recovery?: Recovery; contentType?: string },
+  governance?: { refuseTier?: RefuseTier; recovery?: Recovery; contentType?: string; backendScanId?: string },
   violations?: SanitizedViolation[],
 ): SanitizedApprovalResponse {
   const expiresMinutes = Math.ceil(approvalInfo.expires_in_seconds / 60);
@@ -1267,9 +1301,9 @@ function buildApprovalResponse(
   //      was requested; approval_id present; check_approval will resolve.
   //   3. plain in-band — action requires approval; approval_id present;
   //      check_approval will resolve.
-  // The out-of-band branch is the U2 fix from the 2026-07-09 consumer review:
-  // the generic "wait for check_approval" instruction was misleading when no
-  // approval_id had been minted.
+  // The out-of-band branch exists because the generic "wait for
+  // check_approval" instruction is misleading when no approval_id has been
+  // minted.
   let agentInstruction: string;
   let userMessage: string;
   if (!hasApprovalId) {
@@ -1294,7 +1328,7 @@ function buildApprovalResponse(
     agent_instruction: agentInstruction,
     user_message: userMessage,
     audit: {
-      scan_id: requestId,
+      scan_id: governance?.backendScanId || requestId,
       timestamp: new Date().toISOString(),
       policy_name: approvalInfo.policy_name,
     },
@@ -1329,7 +1363,7 @@ export function sanitizeScanResult(
   // Note: PII redaction returns safe=true with recommendedAction='redact' — this is NOT a block
   if (result.safe && (result.recommendedAction === 'allow' || result.recommendedAction === 'redact')) {
     const audit: AuditBlock = {
-      scan_id: requestId,
+      scan_id: result.backendScanId || requestId,
       timestamp: new Date().toISOString(),
     };
 
@@ -1365,7 +1399,7 @@ export function sanitizeScanResult(
   const confidence = bucketConfidence(result.confidence);
 
   const blockedAudit: AuditBlock = {
-    scan_id: requestId,
+    scan_id: result.backendScanId || requestId,
     timestamp: new Date().toISOString(),
     policy_name: primaryViolation?.policyName || 'Security Policy',
     framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
@@ -1412,7 +1446,7 @@ export function sanitizeSQLResult(
       action: 'allow' as const,
       agent_instruction: AGENT_INSTRUCTION_ALLOWED,
       audit: {
-        scan_id: requestId,
+        scan_id: result.backendScanId || requestId,
         timestamp: new Date().toISOString(),
       },
       ...(result.sessionState ? { session_state: result.sessionState } : {}),
@@ -1439,7 +1473,7 @@ export function sanitizeSQLResult(
     agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_sql_query'],
     user_message: USER_MESSAGES[threatType],
     audit: {
-      scan_id: requestId,
+      scan_id: result.backendScanId || requestId,
       timestamp: new Date().toISOString(),
       policy_name: 'Security Policy',
       framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
@@ -1473,7 +1507,7 @@ export function sanitizeFileWriteResult(
       action: 'allow' as const,
       agent_instruction: AGENT_INSTRUCTION_ALLOWED,
       audit: {
-        scan_id: requestId,
+        scan_id: result.backendScanId || requestId,
         timestamp: new Date().toISOString(),
       },
       ...(result.sessionState ? { session_state: result.sessionState } : {}),
@@ -1500,7 +1534,7 @@ export function sanitizeFileWriteResult(
     agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_file_write'],
     user_message: USER_MESSAGES[threatType],
     audit: {
-      scan_id: requestId,
+      scan_id: result.backendScanId || requestId,
       timestamp: new Date().toISOString(),
       policy_name: 'Security Policy',
       framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
@@ -1534,7 +1568,7 @@ export function sanitizeWebSearchResult(
       action: 'allow' as const,
       agent_instruction: AGENT_INSTRUCTION_ALLOWED,
       audit: {
-        scan_id: requestId,
+        scan_id: result.backendScanId || requestId,
         timestamp: new Date().toISOString(),
       },
       ...(result.sessionState ? { session_state: result.sessionState } : {}),
@@ -1561,7 +1595,7 @@ export function sanitizeWebSearchResult(
     agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_web_search'],
     user_message: USER_MESSAGES[threatType],
     audit: {
-      scan_id: requestId,
+      scan_id: result.backendScanId || requestId,
       timestamp: new Date().toISOString(),
       policy_name: 'Security Policy',
       framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
@@ -1595,7 +1629,7 @@ export function sanitizeCommandResult(
       action: 'allow' as const,
       agent_instruction: AGENT_INSTRUCTION_ALLOWED,
       audit: {
-        scan_id: requestId,
+        scan_id: result.backendScanId || requestId,
         timestamp: new Date().toISOString(),
       },
       ...(result.sessionState ? { session_state: result.sessionState } : {}),
@@ -1622,7 +1656,7 @@ export function sanitizeCommandResult(
     agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_command'],
     user_message: USER_MESSAGES[threatType],
     audit: {
-      scan_id: requestId,
+      scan_id: result.backendScanId || requestId,
       timestamp: new Date().toISOString(),
       policy_name: 'Security Policy',
       framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
@@ -1655,7 +1689,7 @@ export function sanitizeA2AMessageResult(
       action: 'allow' as const,
       agent_instruction: AGENT_INSTRUCTION_ALLOWED,
       audit: {
-        scan_id: requestId,
+        scan_id: result.backendScanId || requestId,
         timestamp: new Date().toISOString(),
       },
       ...(result.sessionState ? { session_state: result.sessionState } : {}),
@@ -1682,7 +1716,7 @@ export function sanitizeA2AMessageResult(
     agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_a2a_message'],
     user_message: USER_MESSAGES[threatType],
     audit: {
-      scan_id: requestId,
+      scan_id: result.backendScanId || requestId,
       timestamp: new Date().toISOString(),
       policy_name: 'Security Policy',
       framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],
@@ -1715,7 +1749,7 @@ export function sanitizeAgentCardResult(
       action: 'allow' as const,
       agent_instruction: AGENT_INSTRUCTION_ALLOWED,
       audit: {
-        scan_id: requestId,
+        scan_id: result.backendScanId || requestId,
         timestamp: new Date().toISOString(),
       },
       ...(result.sessionState ? { session_state: result.sessionState } : {}),
@@ -1742,7 +1776,7 @@ export function sanitizeAgentCardResult(
     agent_instruction: AGENT_INSTRUCTIONS_BLOCKED[toolName] || AGENT_INSTRUCTIONS_BLOCKED['scan_agent_card'],
     user_message: USER_MESSAGES[threatType],
     audit: {
-      scan_id: requestId,
+      scan_id: result.backendScanId || requestId,
       timestamp: new Date().toISOString(),
       policy_name: 'Security Policy',
       framework_references: [OWASP_MAPPING[threatType], ...getFrameworkRefs(threatType)],

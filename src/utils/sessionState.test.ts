@@ -199,8 +199,8 @@ describe('symmetric session_state on specialized (act-plane) scan responses', ()
 
 // -----------------------------------------------------------------------
 // Approval branch symmetry — the third response type must carry the block
-// too. Regression guard for the 2026-07-03 defect Claude Code caught:
-// buildApprovalResponse omitted session_state, breaking policy code like
+// too. Regression guard: buildApprovalResponse once omitted session_state,
+// breaking policy code like
 // `if (r.session_state.session_risk_score > threshold)` on the response
 // branch most likely to hit the threshold.
 // -----------------------------------------------------------------------

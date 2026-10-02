@@ -6,10 +6,8 @@
  * — is forwarded from the InternalScanResult through to the sanitized wire
  * response.
  *
- * Pre-2026-07-07 the sanitizer omitted these fields, so callers on the
- * MCP client (Claude Desktop, other MCP hosts) could not see the four-state
- * governance signal. See docs/claude-desktop-e2e-verification-2026-07-07.md
- * — F1 arbiter confirmed backend emits both refuse_tier and recovery.
+ * Without this forwarding, MCP clients (Claude Desktop and other MCP hosts)
+ * cannot see the four-state governance signal the backend emits.
  */
 
 import { describe, it, expect } from 'vitest';

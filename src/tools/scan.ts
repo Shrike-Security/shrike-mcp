@@ -214,6 +214,9 @@ export interface PerformanceMetrics {
  * Standardized scan result with rich metadata for security decisions
  */
 export interface ScanResult {
+  /** The persisted scan row's id, when the backend recorded one. Carried so
+   *  the audit block can name the scan a later report_outcome refers to. */
+  backendScanId?: string;
   /** Primary safety verdict */
   safe: boolean;
   /** Overall threat level: none, low, medium, high, critical */
@@ -293,6 +296,9 @@ export interface ScanResult {
  * Backend response type mapping
  */
 export interface BackendResponse {
+  /** The persisted scan row's id, echoed so a later report_outcome can
+   *  name this scan. Absent on a verdict the backend never recorded. */
+  scan_id?: string;
   safe: boolean;
   threat_level?: string;
   violations?: Array<{
@@ -623,6 +629,7 @@ function transformBackendResponse(data: BackendResponse, scanTimeMs: number): Sc
   } : undefined;
 
   return {
+    backendScanId: data.scan_id,
     safe: data.safe,
     threatLevel: data.threat_level || 'none',
     confidence: maxConfidence,

@@ -29,8 +29,16 @@ export interface KeyProvider {
 // Credentials file path: ~/.shrike/credentials
 // ---------------------------------------------------------------------------
 
-const CREDENTIALS_DIR = join(homedir(), '.shrike');
-const CREDENTIALS_FILE = join(CREDENTIALS_DIR, 'credentials');
+// Resolved at call time rather than at import so the location follows the
+// current HOME: a test can point HOME at an empty directory, and a process
+// whose HOME changes after startup is honoured.
+function credentialsDir(): string {
+  return join(homedir(), '.shrike');
+}
+
+function credentialsFile(): string {
+  return join(credentialsDir(), 'credentials');
+}
 
 /**
  * Reads a saved API key from ~/.shrike/credentials.
@@ -38,7 +46,7 @@ const CREDENTIALS_FILE = join(CREDENTIALS_DIR, 'credentials');
  */
 async function readCredentialsFile(): Promise<string | null> {
   try {
-    const content = await readFile(CREDENTIALS_FILE, 'utf-8');
+    const content = await readFile(credentialsFile(), 'utf-8');
     const parsed = JSON.parse(content) as { api_key?: string };
     return parsed.api_key?.trim() || null;
   } catch {
@@ -50,9 +58,9 @@ async function readCredentialsFile(): Promise<string | null> {
  * Saves an API key to ~/.shrike/credentials with 0600 permissions.
  */
 export async function saveCredentials(apiKey: string): Promise<void> {
-  await mkdir(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
+  await mkdir(credentialsDir(), { recursive: true, mode: 0o700 });
   const content = JSON.stringify({ api_key: apiKey }, null, 2) + '\n';
-  await writeFile(CREDENTIALS_FILE, content, { mode: 0o600 });
+  await writeFile(credentialsFile(), content, { mode: 0o600 });
 }
 
 // ---------------------------------------------------------------------------

@@ -33,6 +33,9 @@ export interface FileWriteInput {
 }
 
 export interface FileWriteResult {
+  /** The persisted scan row's id, when the backend recorded one. Carried so
+   *  the audit block can name the scan a later report_outcome refers to. */
+  backendScanId?: string;
   safe: boolean;
   threatLevel: string;
   confidence: number;
@@ -72,6 +75,9 @@ export interface FileWriteResult {
  * Backend specialized scan response type
  */
 interface BackendSpecializedResponse {
+  /** The persisted scan row's id, echoed so a later report_outcome can
+   *  name this scan. Absent on a verdict the backend never recorded. */
+  scan_id?: string;
   safe: boolean;
   threat_type?: string;
   severity?: string;
@@ -336,6 +342,9 @@ export async function scanFileWrite(input: FileWriteInput, customerId: string = 
     });
 
     const internalResult: FileWriteResult = {
+      // Two scans back this verdict; the content scan is the substantive
+      // one, so it names the row. The path scan is the fallback.
+      backendScanId: contentData.scan_id || pathData.scan_id,
       safe: overallSafe,
       threatLevel: overallSafe ? 'none' : mapSeverityToThreatLevel(highestSeverity),
       confidence: totalConfidence,

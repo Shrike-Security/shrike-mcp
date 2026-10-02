@@ -3,6 +3,22 @@ name: Publish to MCP Registry (OIDC)
 # Publishes server.json to the official MCP Registry
 # (registry.modelcontextprotocol.io) using GitHub Actions OIDC.
 #
+# THIS FILE IS TRACKED HERE BUT RUNS IN THE PUBLIC MIRROR.
+# It existed only in Shrike-Security/shrike-mcp and was untracked in this
+# monorepo, which made it a deletion waiting to happen: release-sdk.sh syncs
+# the mirror by clearing the working tree except .git and copying an
+# allow-list that includes .github, so the next `release-sdk.sh mcp
+# --sync-public` would have removed a workflow nothing here recorded. Keeping
+# it under platform/mcp means the sync COPIES it instead of deleting it, and
+# the monorepo is the single source of truth for everything in the mirror —
+# the same arrangement the three SDK mirrors have, which carry no workflows of
+# their own at all.
+#
+# Do not move this job into the monorepo's own .github/workflows. npm
+# publishing moved here deliberately; the MCP registry step did not, and
+# whether a private-repo OIDC identity satisfies the registry's namespace
+# check is untested. It works where it is.
+#
 # Why OIDC instead of `mcp-publisher login github` (device flow):
 # this workflow runs INSIDE Shrike-Security/shrike-mcp, so its OIDC identity IS
 # the org. The registry authorizes the `io.github.Shrike-Security/*` namespace
@@ -18,11 +34,17 @@ name: Publish to MCP Registry (OIDC)
 # Run: Actions tab -> "Publish to MCP Registry (OIDC)" -> Run workflow.
 
 on:
+  # Dispatch only, and dispatched by scripts/release-sdk.sh (step 4b) right
+  # after it syncs this mirror.
+  #
+  # A `release: types: [published]` trigger used to sit here, claiming the
+  # registry version could never drift from the tagged release again. It never
+  # fired once. It listens for a release in THIS repository, and the release
+  # flow pushes commits here (release-sdk.sh step 4, `git push origin HEAD`)
+  # without ever creating one — this mirror has had a single release in its
+  # whole history. So the registry was updated by hand for months behind a
+  # trigger that read as automation. Removed rather than left as a comfort.
   workflow_dispatch:
-  # Also publish automatically whenever a GitHub Release is published, so the
-  # registry version can never drift from the tagged release again.
-  release:
-    types: [published]
 
 permissions:
   contents: read

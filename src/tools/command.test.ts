@@ -182,7 +182,7 @@ describe('scanCommand', () => {
   // scan_web_search, scan_a2a_message, scan_agent_card); this test is the
   // canonical assertion for that contract.
   //
-  // Prior behavior (fixed 2026-07-03): caller values arrived first in the
+  // Regression guard: caller values once arrived first in the
   // context spread and were silently clobbered by getSessionId() / getAgentId()
   // — which broke the tool schema's own advertised interface and confounded
   // black-box scoping tests (every integrator saw one process-level session

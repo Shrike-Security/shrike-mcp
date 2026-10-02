@@ -11,11 +11,11 @@ import { updatePIIPatterns, getPIIPatternCount, type PIIPattern } from './piiRed
 /**
  * Backend response from GET /api/pii/patterns.
  *
- * The backend now ships `prefix` as an authoritative field. Older backends
- * (pre-2026-07-01) omit it; the sync falls back to a threat_type-derived
+ * The backend ships `prefix` as an authoritative field. A backend that
+ * predates the field omits it; the sync falls back to a threat_type-derived
  * prefix so no pattern is ever silently dropped. That's the whole point of
- * moving prefix resolution to the backend — Presidio-style, recognizer
- * owns its entity tag, client stays dumb.
+ * moving prefix resolution to the backend: the recognizer owns its entity
+ * tag and the client stays dumb.
  */
 interface BackendPIIResponse {
   patterns: Array<{
@@ -90,7 +90,7 @@ export async function syncPIIPatterns(): Promise<void> {
 
     for (const p of data.patterns) {
       // Backend is the source of truth for the redaction tag. If it
-      // ships a prefix (post-2026-07-01), use it verbatim. If not,
+      // ships a prefix, use it verbatim. If not,
       // derive locally so no pattern is ever silently dropped — this
       // is the whole reason PREFIX_MAP was retired.
       let prefix = p.prefix;

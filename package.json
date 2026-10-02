@@ -1,7 +1,7 @@
 {
   "name": "shrike-mcp",
   "mcpName": "io.github.Shrike-Security/shrike-mcp",
-  "version": "4.0.2",
+  "version": "4.1.0",
   "description": "MCP server for action governance on AI agents — 14 tools that govern tool calls, SQL queries, file writes, shell commands, and agent-to-agent messages server-side, before execution. Allow / approve / block. Session correlation. Works with Claude Desktop, Cursor, Windsurf, and any MCP client.",
   "type": "module",
   "main": "./dist/index.js",

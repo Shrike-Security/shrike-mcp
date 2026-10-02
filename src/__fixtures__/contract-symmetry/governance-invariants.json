@@ -1,0 +1,82 @@
+{
+  "description": "Field-level invariants each sanitizer (Python SDK, TS SDK, MCP responseFormatter) MUST uphold. When a raw backend response has a field in must_preserve_top_level, the sanitized output must include it (with the same value). Fields in must_strip must never appear on the sanitized output.",
+  "unsafe_branch": {
+    "must_preserve_top_level": [
+      "action",
+      "refuse_tier",
+      "recovery",
+      "session_state",
+      "content_type",
+      "approval_info"
+    ],
+    "session_state_must_preserve": [
+      "session_risk_score",
+      "session_turn_number",
+      "session_patterns",
+      "session_locked"
+    ],
+    "recovery_must_preserve": [
+      "instruction",
+      "available_tools",
+      "patterns_triggered"
+    ],
+    "violation_must_preserve": [
+      "threat_type",
+      "owasp_category",
+      "severity",
+      "action",
+      "user_message",
+      "suggested_action"
+    ],
+    "violation_must_strip": [
+      "policy_id",
+      "policy_name",
+      "matched_pattern",
+      "matched_text",
+      "detected_by",
+      "ai_reasoning",
+      "llm_analysis",
+      "performance_metrics",
+      "scan_stage"
+    ],
+    "top_level_must_strip": [
+      "matched_pattern",
+      "matched_text",
+      "detected_by",
+      "ai_reasoning",
+      "llm_analysis",
+      "performance_metrics",
+      "scan_stage"
+    ]
+  },
+  "safe_branch": {
+    "must_preserve_top_level": [
+      "action",
+      "refuse_tier",
+      "recovery",
+      "session_state",
+      "content_type",
+      "approval_info"
+    ],
+    "session_state_must_preserve": [
+      "session_risk_score",
+      "session_turn_number",
+      "session_patterns",
+      "session_locked"
+    ],
+    "recovery_must_preserve": [
+      "instruction",
+      "available_tools",
+      "patterns_triggered"
+    ],
+    "top_level_must_strip": [
+      "matched_pattern",
+      "matched_text",
+      "detected_by",
+      "ai_reasoning",
+      "llm_analysis",
+      "performance_metrics",
+      "scan_stage"
+    ]
+  }
+}

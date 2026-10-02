@@ -14,10 +14,11 @@ meta:
 about:
   title: Shrike
   description: |
-    AI governance for agents — evaluates every AI interaction against policy via the
-    Model Context Protocol. Multi-layered cognitive pipeline with 643 test scenarios.
+    Action governance for AI agents: every tool call, shell command, SQL query,
+    file write, web search and agent-to-agent message is checked against policy
+    before it runs, over the Model Context Protocol.
 
-    12 governance tools:
+    15 governance tools:
     - scan_prompt: Detect prompt injection and jailbreak attempts
     - scan_response: Scan LLM outputs for data leaks and manipulation
     - scan_sql_query: Detect SQL injection in AI-generated queries
@@ -26,14 +27,17 @@ about:
     - scan_web_search: Check search queries for SSRF and domain abuse
     - scan_a2a_message: Scan agent-to-agent messages for injection
     - scan_agent_card: Validate agent discovery cards for spoofing
+    - scan_mcp_schema: Scan MCP tool definitions for poisoned descriptions
+    - scan_declare_scope: Declare an agent's purpose, allowed tools and expiry
+    - session_status: Read the session's accumulated risk and recovery guidance
     - report_bypass: Report novel attack patterns for community defense
-    - get_threat_intel: Retrieve latest threat patterns and detection signatures
     - check_approval: Human-in-the-loop approval workflows
     - reset_session: Clear multi-turn session correlation state
+    - report_outcome: Report whether an allowed action executed, failed or was skipped
 
-    Multi-layered cognitive pipeline: pattern matching → unicode normalization →
-    encoding detection → token analysis → semantic analysis → visual similarity →
-    LLM reasoning → response intelligence → session correlation.
+    Multi-layered detection: pattern matching, unicode normalization, encoding
+    detection, token analysis, semantic analysis, visual similarity, LLM
+    reasoning, response intelligence, session correlation.
   icon: https://avatars.githubusercontent.com/u/Shrike-Security
 source:
   project: https://github.com/Shrike-Security/shrike-mcp

@@ -1,11 +1,10 @@
 /**
  * Unit tests for reset_session tool.
  *
- * The 2026-07-01 launch-test report flagged intermittent hangs on
- * reset_session (and check_approval). Root cause: fetch() had no
- * AbortController, so a stuck backend or held correlator lock left
- * the MCP client hanging indefinitely with no error the caller could
- * react to. The timeout-guard test below locks in the fix.
+ * reset_session (and check_approval) must never hang: fetch() runs under an
+ * AbortController, so a stuck backend leaves the caller with an error it can
+ * react to rather than an indefinite wait. The timeout-guard test below
+ * locks that in.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

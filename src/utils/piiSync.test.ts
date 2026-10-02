@@ -1,11 +1,9 @@
 /**
  * Unit tests for piiSync — verifies the backend-owned prefix contract.
  *
- * The 2026-07-01 launch retest surfaced an IP-redaction failure caused
- * by a client-side allowlist (PREFIX_MAP) that silently dropped any
- * threat_type it hadn't heard of. The architectural fix moves prefix
- * resolution to the backend (Presidio-style — the recognizer owns its
- * entity tag) and has the client fall back to a threat_type-derived
+ * A client-side allowlist must never drop a threat_type it has not heard
+ * of, because a dropped pattern is a redaction that does not happen. Prefix
+ * resolution to the backend (the recognizer owns its entity tag) and has the client fall back to a threat_type-derived
  * prefix if a backend ships without it. Net: no threat_type ever
  * silently disappears, and adding a new backend pattern requires zero
  * client changes.
@@ -61,7 +59,7 @@ describe('syncPIIPatterns — backend-owned prefix contract', () => {
   });
 
   it('falls back to threat_type-derived prefix when backend omits it (old backend)', async () => {
-    // Simulate a pre-2026-07-01 backend that doesn't ship the prefix field.
+    // Simulate a backend that doesn't ship the prefix field.
     // The client must NOT drop the pattern — instead it derives PII_IP_ADDRESS
     // → IP_ADDRESS from the threat_type. Different tag than a modern backend's
     // "IP", but redaction still fires. That's the whole point: no silent drop.
@@ -85,7 +83,7 @@ describe('syncPIIPatterns — backend-owned prefix contract', () => {
     expect(result.redactedText).toMatch(/\[IP_ADDRESS_\d+\]/);
   });
 
-  it('never silently drops unknown threat_types (regressed 2026-07-01)', async () => {
+  it('never silently drops unknown threat_types', async () => {
     // A backend adds a hypothetical new pattern we've never seen. The client
     // must sync it, not skip it. Prior behavior: silently dropped.
     mockFetch.mockResolvedValueOnce({

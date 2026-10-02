@@ -6,7 +6,7 @@
  *
  * Tool Selection Modes:
  *   Mode A (Selective): SHRIKE_TOOLS=scan_prompt,scan_sql_query (env) or X-Shrike-Tools header (HTTP)
- *   Mode B (All):       Default — all 14 tools register. Backwards compatible.
+ *   Mode B (All):       Default — all 15 tools register. Backwards compatible.
  *   Mode C (Bundled):   SHRIKE_MODE=bundled — single shrike_scan tool. Minimum context footprint.
  */
 
@@ -48,6 +48,7 @@ import { scanA2AMessage, scanA2AMessageTool } from './tools/a2aMessage.js';
 import { scanAgentCard, scanAgentCardTool } from './tools/agentCard.js';
 import { scanDeclareScope, scanDeclareScopeTool } from './tools/scanDeclareScope.js';
 import { scanMCPSchema, scanMCPSchemaTool } from './tools/scanMCPSchema.js';
+import { reportOutcome, reportOutcomeTool } from './tools/reportOutcome.js';
 import { syncPIIPatterns } from './utils/piiSync.js';
 import { createKeyProvider } from './keyProvider.js';
 import { KeyRotationManager } from './keyRotation.js';
@@ -82,7 +83,7 @@ Usage:
 Environment Variables:
   SHRIKE_API_KEY               API key for authenticated scans (enables LLM layers)
   SHRIKE_BACKEND_URL           Backend API URL (default: https://api.shrikesecurity.com/agent)
-  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 14)
+  SHRIKE_TOOLS                 Comma-separated tool names to register (default: all 15)
   SHRIKE_MODE                  Tool mode: bundled (single shrike_scan tool) or omit for normal
   MCP_TRANSPORT                Transport mode: stdio (default) or http
   MCP_PORT                     HTTP server port (default: 8000, used in http mode)
@@ -187,6 +188,10 @@ const TOOL_REGISTRY: Record<string, {
     definition: scanMCPSchemaTool,
     handler: (a, _c) => scanMCPSchema(a),
   },
+  report_outcome: {
+    definition: reportOutcomeTool,
+    handler: (a, _c) => reportOutcome(a),
+  },
 };
 
 /**
@@ -252,6 +257,7 @@ const BUNDLED_TYPE_MAP: Record<string, string> = {
   agent_card: 'scan_agent_card',
   declare_scope: 'scan_declare_scope',
   mcp_schema: 'scan_mcp_schema',
+  report_outcome: 'report_outcome',
 };
 
 /**

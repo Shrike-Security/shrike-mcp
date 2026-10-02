@@ -158,7 +158,7 @@ describe('scanAgentCard', () => {
           session_locked: true,
         },
         recovery: {
-          instruction: 'Start a new session_id for the next call.',
+          instruction: 'This session is locked. Risk accumulated over earlier turns crossed the block threshold.',
           available_tools: ['scan_prompt', 'scan_response', 'session_status'],
         },
       }),

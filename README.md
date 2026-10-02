@@ -4,15 +4,15 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
 
-**Govern what your AI agents do — every tool call, command, and query checked against your policy before it runs. 14 MCP tools; 9-layer engine. Works without an API key.**
+**Govern what your AI agents do: every tool call, command, and query checked against your policy before it runs. 15 MCP tools; 9-layer engine. Works without an API key.**
 
-Shrike MCP is the Model Context Protocol server for [Shrike](https://shrikesecurity.com). It puts a policy checkpoint at the moment an AI agent acts: every tool call, SQL query, file write, CLI command, web search, and agent-to-agent message is evaluated against your policy and **allowed, flagged for approval, or blocked before it executes** — on your terms, independent of your model or cloud. Underneath, a 9-layer engine detects prompt injection, jailbreaks, data leakage, PII exposure, and multi-turn manipulation so those verdicts are accurate.
+Shrike MCP is the Model Context Protocol server for [Shrike](https://shrikesecurity.com). It puts a policy checkpoint at the moment an AI agent acts: every tool call, SQL query, file write, CLI command, web search, and agent-to-agent message is evaluated against your policy and **allowed, flagged for approval, or blocked before it executes**, on your terms, independent of your model or cloud. Underneath, a 9-layer engine detects prompt injection, jailbreaks, data leakage, PII exposure, and multi-turn manipulation so those verdicts are accurate.
 
 ## Shrike Platform
 
-**Shrike** is the independent governance layer for AI interactions. It evaluates inputs, outputs, tool calls, and agent-to-agent communication through a 9-layer cognitive pipeline — from sub-millisecond pattern matching to LLM-powered semantic analysis and multi-turn session correlation. Governs employees using AI tools, developers using coding assistants, autonomous agents, and customer-facing chatbots through the same pipeline.
+**Shrike** is the independent governance layer for AI interactions. It evaluates inputs, outputs, tool calls, and agent-to-agent communication through a 9-layer cognitive pipeline, from sub-millisecond pattern matching to LLM-powered semantic analysis and multi-turn session correlation. Governs employees using AI tools, developers using coding assistants, autonomous agents, and customer-facing chatbots through the same pipeline.
 
-This repo is the **MCP server** — one of several ways to integrate:
+This repo is the **MCP server**, one of several ways to integrate:
 
 | Integration | Install | Use Case |
 |-------------|---------|----------|
@@ -26,7 +26,7 @@ This repo is the **MCP server** — one of several ways to integrate:
 
 ## Quick Start
 
-**Works immediately — no API key required.** Anonymous usage gets L1-L5 pattern-based detection. Register for a free account for a dashboard, higher rate limits, and scan history; LLM-powered semantic analysis (L6-L9) is available on Pro.
+**Works immediately: no API key required.** Anonymous usage gets L1-L5 pattern-based detection. Register for a free account for a dashboard, higher rate limits, and scan history; LLM-powered semantic analysis (L6-L9) is available on Pro.
 
 **1. Add to your MCP client config:**
 
@@ -57,13 +57,13 @@ This repo is the **MCP server** — one of several ways to integrate:
 }
 ```
 
-Get a free key at [shrikesecurity.com/signup](https://shrikesecurity.com/signup) — instant, no credit card.
+Get a free key at [shrikesecurity.com/signup](https://shrikesecurity.com/signup): instant, no credit card.
 
-> **npm only.** The Shrike MCP server is distributed on npm and runs via `npx shrike-mcp` (Node.js required). There is **no** `pip install shrike-mcp` — an unrelated third-party package happens to hold that name on PyPI. For Python *code* integration, use the Python SDK: `pip install shrike-guard`.
+> **npm only.** The Shrike MCP server is distributed on npm and runs via `npx shrike-mcp` (Node.js required). There is **no** `pip install shrike-mcp`; an unrelated third-party package happens to hold that name on PyPI. For Python *code* integration, use the Python SDK: `pip install shrike-guard`.
 
-**3. Your agent now has 14 security tools** (9 governance scanners, 1 scope declaration, and 4 session & approval tools). Every prompt, response, and tool call can be scanned before execution.
+**3. Your agent now has 15 security tools** (9 governance scanners, 1 scope declaration, 1 outcome report, and 4 session & approval tools). Every prompt, response, and tool call can be scanned before execution.
 
-## Fourteen Tools
+## Fifteen Tools
 
 | Tool | What It Guards | Example Threat |
 |------|---------------|----------------|
@@ -81,10 +81,11 @@ Get a free key at [shrikesecurity.com/signup](https://shrikesecurity.com/signup)
 | `reset_session` | Clear session correlation state | Reset L9 turn history after resolving flagged patterns |
 | `session_status` | Read-only lookup of L9 session state | Confirm risk score + patterns before rotating a locked session |
 | `scan_declare_scope` | Declared operating scope for task-scoped agents | Enforces allowed/forbidden tools and expiry on every subsequent scan |
+| `report_outcome` | What became of an action a scan allowed | Reports executed, failed or skipped, and closes a held action's decision |
 
 ## How It Works
 
-Shrike uses a **scan-sandwich** pattern — every agent action is scanned on both sides:
+Shrike uses a **scan-sandwich** pattern: every agent action is scanned on both sides:
 
 ```
 User Input → scan_prompt → LLM Processing → scan_response → User Output
@@ -102,7 +103,7 @@ Agent-to-Agent Communication:
 
 Inbound scans catch injection attacks. Outbound scans catch data leaks. Tool-specific scans catch SQL injection, path traversal, command injection, and PII exposure. A2A scans catch east-west injection between agents. Flagged actions trigger human-in-the-loop approval via `check_approval`.
 
-Enterprise tier adds **session correlation** (L9) — tracking multi-turn patterns like trust escalation, payload splitting, and blocked retry sequences across an entire conversation.
+Pro and above add **session correlation** (L9), tracking multi-turn patterns like trust escalation, payload splitting, and blocked retry sequences across an entire conversation.
 
 ## Detection Pipeline
 
@@ -121,11 +122,11 @@ Every scan runs through the 9-layer cognitive pipeline. Lower layers are sub-mil
 | L8 | Response intelligence (LLM compromise, tonality drift) | Pro+ |
 | L9 | Multi-turn session correlation (7 pattern detectors) | Pro+ |
 
-The **cascade optimizer** exits early when high-confidence detection is achieved at a lower layer — so most scans complete in under 10ms without needing the LLM layer.
+The **cascade optimizer** exits early when high-confidence detection is achieved at a lower layer, so most scans complete in under 10ms without needing the LLM layer.
 
 ## Tiers
 
-All 14 tools are available on every tier. Tiers control detection depth and volume.
+All 15 tools are available on every tier. Tiers control detection depth and volume.
 
 | | Anonymous | Community | Pro | Enterprise |
 |---|---|---|---|---|
@@ -141,7 +142,7 @@ All 14 tools are available on every tier. Tiers control detection depth and volu
 
 **Community** (free): Same L1-L5 pattern-based detection, plus a dashboard, 1,000 scans/month, and audit history. Register at [shrikesecurity.com/signup](https://shrikesecurity.com/signup).
 
-**Pro/Enterprise**: Full 9-layer pipeline — adds LLM-powered semantic analysis (L6-L7), response intelligence (L8), and multi-turn session correlation (L9).
+**Pro/Enterprise**: Full 9-layer pipeline: adds LLM-powered semantic analysis (L6-L7), response intelligence (L8), and multi-turn session correlation (L9).
 
 ## Compliance
 
@@ -149,13 +150,13 @@ Built-in policy catalogues with sensitive-data detection aligned to 5 major regu
 
 | Framework | Coverage |
 |-----------|----------|
-| **GDPR** | EU personal data — names, addresses, national IDs |
+| **GDPR** | EU personal data: names, addresses, national IDs |
 | **HIPAA** | Protected health information (PHI) |
-| **ISO 27001** | Information security — passwords, tokens, certificates |
+| **ISO 27001** | Information security: passwords, tokens, certificates |
 | **SOC 2** | Secrets, credentials, API keys, cloud tokens |
 | **NIST** | AI risk management (IR 8596), cybersecurity framework (CSF 2.0) |
 
-Detection coverage is not a certification claim — see [shrikesecurity.com/compliance](https://shrikesecurity.com/compliance) for our current certification status.
+Detection coverage is not a certification claim; see [shrikesecurity.com/compliance](https://shrikesecurity.com/compliance) for our current certification status.
 
 ## Configuration
 
@@ -255,25 +256,32 @@ Safe:
 |-----|---------|-----------------|
 | **Employees using ChatGPT** | Pasting customer data, internal docs, PII into AI tools | Browser extension + scan_prompt detects and redacts PII before it reaches the model |
 | **Developers using Copilot** | Proprietary code sent to cloud AI APIs | SDK scans for code patterns, blocks or redacts before code leaves |
-| **AI Agents** | Autonomous actions without human review | Full lifecycle governance — scan every action, require approval for high-risk operations |
+| **AI Agents** | Autonomous actions without human review | Full lifecycle governance: scan every action, require approval for high-risk operations |
 | **Customer-facing Chatbots** | Prompt injection via user input | scan_prompt blocks injection, scan_response prevents system prompt leakage |
 
-## Alternatives
+## How This Differs From a Prompt Scanner
 
-Looking for AI security tools? Here's how Shrike compares:
+Most AI security tools answer one question: **is this text hostile?** They read
+the prompt, and sometimes the response. Shrike does that through a 9-layer
+cascade, and then keeps going, because an autonomous agent does not cause harm
+by saying something. It causes harm by *doing* something.
 
-| Capability | Shrike | Lakera | Prompt Armor | Cisco AI Defense |
-|---|---|---|---|---|
-| Runtime governance (allow/approve/block) | Yes | Limited | No | Enterprise only |
-| Human-in-the-loop approval | Yes | No | No | No |
-| Session correlation (multi-turn) | Yes — 7 detectors | No | No | No |
-| CLI command scanning | Yes | No | No | No |
-| A2A protocol scanning | Yes | No | No | No |
-| MCP server integration | Yes — 14 tools | No | No | No |
-| Agent delegation chain tracking | Yes | No | No | No |
-| Hardware enforcement (TEE) | Yes — AMD SEV-SNP | No | No | No |
-| Deploy anywhere (cloud, VPC, air-gapped) | Yes | Cloud only | Cloud only | Cloud only |
-| Free tier | Yes — no API key needed | No | No | No |
+What that means in practice:
+
+- **Pre-execution verdicts on actions**, not only on text: shell commands, SQL,
+  file writes, web searches, RAG context, agent-to-agent messages, agent cards,
+  and MCP tool schemas each get their own scan before they run.
+- **A governance contract, not a boolean.** Every response carries `refuse_tier`
+  (allow / warn / require_approval / block), a `recovery` block telling the agent
+  how to proceed legitimately, and `session_state`, on safe verdicts too.
+- **Human-in-the-loop approval** as a first-class tier, so "this needs a person"
+  is a verdict rather than a failure.
+- **Multi-turn session correlation**, catching the attack that is harmless in
+  any single message and hostile across ten.
+- **Agent delegation chain tracking**, so a sub-agent's actions are attributable
+  to the task that spawned them.
+- **Deploy where your data already is**: cloud, VPC, or air-gapped.
+- **Free tier with no API key**, and an Apache 2.0 client you can read.
 
 ## Try It
 
@@ -293,14 +301,14 @@ Once the MCP server is connected, try these prompts in Claude or your MCP client
 
 ## Links
 
-- [Shrike](https://shrikesecurity.com) — Sign up, dashboard, docs
-- [Documentation](https://shrikesecurity.com/docs) — Quick start, API reference, MCP guide
-- [GitHub](https://github.com/Shrike-Security/shrike-mcp) — Source code, issues
-- [npm](https://www.npmjs.com/package/shrike-mcp) — Package registry
-- [TypeScript SDK](https://github.com/Shrike-Security/shrike-guard-js) — `npm install shrike-guard`
-- [Python SDK](https://github.com/Shrike-Security/shrike-guard-python) — `pip install shrike-guard`
-- [GCP Marketplace](https://console.cloud.google.com/marketplace) — Enterprise deployment with committed spend
+- [Shrike](https://shrikesecurity.com): Sign up, dashboard, docs
+- [Documentation](https://shrikesecurity.com/docs): Quick start, API reference, MCP guide
+- [GitHub](https://github.com/Shrike-Security/shrike-mcp): Source code, issues
+- [npm](https://www.npmjs.com/package/shrike-mcp): Package registry
+- [TypeScript SDK](https://github.com/Shrike-Security/shrike-guard-js): `npm install shrike-guard`
+- [Python SDK](https://github.com/Shrike-Security/shrike-guard-python): `pip install shrike-guard`
+- [GCP Marketplace](https://console.cloud.google.com/marketplace): Enterprise deployment with committed spend
 
 ## License
 
-Apache License 2.0 — See [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE) for details.

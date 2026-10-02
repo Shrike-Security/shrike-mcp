@@ -4,6 +4,26 @@ All notable changes to shrike-mcp will be documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [4.1.0] - 2026-09-18
+
+### Added
+- **`report_outcome`: what became of an action a scan allowed.** A scan proves an action was authorized, never that it ran. The fifteenth tool reports `executed`, `failed` or `skipped` against the `scan_id` the verdict carried, and closes the decision record a held action opened. Best effort by design: every failure path returns a result rather than throwing, so a failed report can never change what the agent does next. Callable under quarantine, because reporting an outcome is not an action. Status and time only; a host's error text carries prompt content and never travels on this path.
+- **`scan_declare_scope` refreshes by inheritance.** Calling it again with only `agent_id` and `max_duration_seconds` re-anchors the expiry of the scope already on file, inside the renewal window the operator set. A refresh may narrow a scope and never widen it; widening still needs operator authority.
+- **`reset_session` self-release under a live declared scope.** An agent whose session is locked may release it with its own key a bounded number of times per renewal window, and every release is audited. Outside a live scope the tool stays administratively restricted at the block threshold.
+- **Vendored contract fixtures.** The contract-symmetry suite reads its fixtures from `src/__fixtures__/`, so a public checkout runs the full suite.
+
+### Changed
+- **Locked-session guidance.** The `recovery.instruction` the backend returns on a `session_locked` verdict now says what the lock is (bounded in turns, then a short probation) and how it lifts (self-release under a live scope, otherwise an operator), instead of telling the agent to start a new `session_id`. The server passes it through unchanged; test fixtures updated to the new text.
+- **README.** The comparison table is gone. "How This Differs From a Prompt Scanner" states the difference in Shrike's own terms.
+- **Public surface.** Backend session-tier numbers removed from tool descriptions, comments and this changelog. The client's own rotation threshold is unchanged.
+- **Docker MCP catalog entry** lists all 15 tools.
+- **`keyProvider`** resolves the credentials path at call time. Test isolation only; no change for users.
+- **`audit.scan_id` is the backend scan row's id.** It carried this server's own request id, which is the same value already published as `request_id`, so the field named a scan the backend had no record of and the README's advice to log it for review pointed at nothing. It now carries the id the backend returns, falling back to the request id only on a fail-closed local verdict that was never recorded. This is what makes `report_outcome` able to name the scan it is reporting on.
+- **The client-facing rotation union carries the lock notice.** A `session_locked`
+  verdict is reported as its own record, with no `suggested_new_session_id` to
+  read, and the two rotating records narrow `reason` to
+  `risk_threshold_exceeded`. Matches the SDKs.
+
 ## [4.0.2] - 2026-08-31
 
 ### Changed
@@ -87,15 +107,15 @@ This project follows [Semantic Versioning](https://semver.org/).
 
   The `SessionState` type is exported from `shrike-mcp` for TypeScript integrators. Available on `SanitizedBlockedResponse`, `SanitizedAllowedResponse`, AND `SanitizedApprovalResponse` as an optional `session_state` field. Requires the shrikesecurity.com backend as of July 2026.
 
-### Fixed — symmetric contract follow-ups (post-first-verification, same 4.0.0 pre-release window)
+### Fixed — symmetric contract follow-ups
 
 - **`session_state` now populates on `require_approval` responses.** The initial 4.0.0 cut only threaded the block through the allow and block sanitizer branches; the third response type (`require_approval`) omitted it. This broke `if (response.session_state.session_risk_score > threshold)` integrator policies on the response branch most likely to hit elevated risk — precisely the response that block-override approvals produce during a poisoning trajectory. Fixed by threading `sessionState` through `buildApprovalResponse` and passing it from every sanitizer call site. Regression guard: parameterized approval-branch tests in `sessionState.test.ts`.
-- **`session_patterns` is now gated on anomaly detection (backend contract change).** Prior behavior: the correlator's internal pattern matchers (e.g. `multi_turn_reconnaissance`, tuned on turn-count and velocity) fire on benign multi-turn trajectories that stay well below the anomaly threshold, and the initial `ToSessionState()` projection emitted every matched category regardless of whether the risk score justified it. That surfaced labels like `multi_turn_reconnaissance` on 4-turn benign chats at `session_risk_score: 0.3` — creating three concrete misinterpretation risks:
+- **`session_patterns` is now gated on anomaly detection (backend contract change).** Prior behavior: pattern labels such as `multi_turn_reconnaissance` could appear on short, benign multi-turn conversations whose risk score did not justify them — creating three concrete misinterpretation risks:
   1. The agent may self-throttle unnecessarily (Cooperative Governance working against a legitimate task).
   2. Customer policies keyed on the pattern string fire on innocent sessions.
   3. Any UI rendering the label reads it as an accusation on benign behavior.
 
-  New behavior: below `AnomalyDetected` (`session_risk_score < 0.5`, the same gate the correlator already uses internally to decide whether to inject session violations), `session_patterns` is an empty array. `session_turn_number` and `session_risk_score` — neutral scalars — still ship on every response so integrators can threshold. The customer contract is now consistent with the internal one: Shrike is only willing to stand behind a labeled pattern once the score has crossed the threshold. Regression guard: `TestToSessionState_PatternsSuppressedBelowAnomaly` + `TestToSessionState_PatternsEmittedAtAnomaly` in `common/correlation/session_state_test.go`.
+  New behavior: until the session's risk score crosses the backend's anomaly gate, `session_patterns` is an empty array. `session_turn_number` and `session_risk_score` — neutral scalars — still ship on every response so integrators can threshold. Shrike only stands behind a labeled pattern once the score has crossed that gate.
 
 ### Removed (BREAKING) — audit-block session fields
 - `audit.session_risk_score` and `audit.correlation_patterns` are **removed** from the sanitized wire response. They previously lived nested inside the compliance audit block; the new top-level `session_state` block is the customer contract for operational governance. Integrators reading `response.audit.session_risk_score` must switch to `response.session_state.session_risk_score`. The audit block retains only compliance-oriented fields (`scan_id`, `timestamp`, `policy_name`, `framework_references`).

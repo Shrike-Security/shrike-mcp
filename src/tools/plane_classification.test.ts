@@ -14,10 +14,9 @@
  * closed Zod object using $strip mode, which silently drops any field
  * not in the schema (title, readOnlyHint, destructiveHint, idempotentHint,
  * openWorldHint). Placing scanClass/quarantineGated on annotations means
- * they are dropped at tools/list serialization and never reach the wire —
- * this was caught by external testing on 2026-07-03 after the first
- * classification attempt, and the fields were moved to _meta which is
- * z.ZodRecord and preserves arbitrary keys.
+ * they are dropped at tools/list serialization and never reach the wire,
+ * so the fields live on _meta, which is z.ZodRecord and preserves
+ * arbitrary keys.
  *
  * This file has two independent tests:
  *

@@ -82,12 +82,12 @@ describe('responseFormatter', () => {
       expect(normalizeThreatType('Jailbreak')).toBe('jailbreak');
     });
 
-    // 2026-07-01 U2 regression: backend Q1 quarantine gate emits threat_type
-    // "session_locked" when accumulated L9 risk >= 0.8. Prior to this fix
-    // the client had no mapping for it, so the gate's verdict silently
-    // transmuted to "unknown" and the user saw the generic guidance rather
-    // than the session-quarantine message. Never regress.
-    it('should map session_locked from the Q1 quarantine gate', () => {
+    // The backend's session-quarantine gate emits threat_type
+    // "session_locked" when accumulated session risk crosses the lock
+    // threshold. Without a client-side mapping the verdict would surface as
+    // "unknown" and the user would see generic guidance rather than the
+    // session-quarantine message.
+    it('should map session_locked from the session-quarantine gate', () => {
       expect(normalizeThreatType('session_locked')).toBe('session_locked');
     });
   });
@@ -182,8 +182,8 @@ describe('responseFormatter', () => {
           expect(sanitized.approval_context.action_summary).toContain('DELETE FROM');
           expect(sanitized.approval_context.expires_in_seconds).toBe(1800);
           expect(sanitized.agent_instruction).toContain('HOLD');
-          // Case-insensitive "do not proceed" — 2026-07-01 enforcement_severity
-          // rework introduced advisory/blocking language that phrases the
+          // Case-insensitive "do not proceed" — the enforcement_severity
+          // advisory/blocking language phrases the
           // clause mid-sentence, so the D is lowercase where it once
           // opened a new sentence. Both variants preserve the meaning.
           expect(sanitized.agent_instruction.toLowerCase()).toContain('do not proceed');
@@ -1171,7 +1171,7 @@ describe('responseFormatter', () => {
     });
   });
 
-  // Regression fence for the 2026-07-08 Claude Desktop A3 findings — scope-Tier-1
+  // Regression fence — scope-Tier-1
   // and other on_safe approvals must surface threat classification in
   // approval_context, and the user_message must render sensibly when the backend
   // has not (yet) created an approval record (no approval_id, no expires_in_seconds).
@@ -1274,7 +1274,7 @@ describe('responseFormatter', () => {
       }
     });
 
-    // 2026-07-09 consumer review U2 — no-approval_id verdicts must specialize
+    // No-approval_id verdicts must specialize
     // the agent_instruction to say "do NOT call check_approval" and set
     // resolution="out_of_band" so integrators branch correctly.
     it('sets resolution=out_of_band and specializes agent_instruction when no approval_id is minted', () => {
@@ -1296,7 +1296,7 @@ describe('responseFormatter', () => {
       const sanitized = sanitizeScanResult(noIdApproval, 'req_scope_no_id');
       if (sanitized.action === 'require_approval') {
         expect(sanitized.resolution).toBe('out_of_band');
-        // Do-NOT-call-check_approval directive is the key U2 fix
+        // The do-NOT-call-check_approval directive is the essential part
         expect(sanitized.agent_instruction).toContain('Do NOT call check_approval');
         expect(sanitized.agent_instruction.toLowerCase()).toMatch(/out-of-band|dashboard|policy|scope/);
       }
@@ -1329,7 +1329,7 @@ describe('responseFormatter', () => {
     });
   });
 
-  // 2026-07-09 consumer review U4 — per-violation user_message must be real
+  // Per-violation user_message must be real
   // text (not the placeholder "Security Policy" or the empty string) so the
   // multi-violation surface is scannable in a UI.
   describe('violation user_message hygiene', () => {

@@ -1,30 +1,38 @@
 /**
  * Client-side SESSION_ID rotation on high-risk / quarantine, with a
- * two-shape rotation record.
+ * three-shape rotation record.
  *
  * The rotation helper `rotateSessionIfTriggered` in config.ts is the single
- * decision point. It emits one of two shapes based on session ownership:
+ * decision point. It emits one of three shapes:
  *
- *   Module-owned (caller did NOT supply session_id, MCP fallback in use):
+ *   Locked (threat_type === 'session_locked', either ownership):
+ *     { rotated: false, rotation_recommended: false, reason: 'session_locked',
+ *       current_session_id }
+ *     NOTHING rotates and nothing should. The lock is the control; a fresh
+ *     session_id sidesteps it rather than clearing it, which is what the
+ *     backend's own recovery instruction tells the agent not to do. A lock
+ *     lifts by `reset_session` under a live declared scope, or by an
+ *     operator. This is the case the suite exists to protect.
+ *
+ *   Module-owned (score trigger, caller did NOT supply session_id):
  *     { rotated: true, owner: 'mcp_client', previous_session_id, new_session_id }
  *     MCP mutates its module SESSION_ID in place.
  *
- *   Caller-owned (caller DID supply session_id on the tool call):
+ *   Caller-owned (score trigger, caller DID supply session_id):
  *     { rotated: false, rotation_recommended: true, owner: 'caller',
  *       current_session_id, suggested_new_session_id }
  *     MCP does NOT mutate anything — session lifecycle belongs to the caller.
  *
- * These tests pin: the two triggers (verdict-based `session_locked` and
- * score-based `SessionState.session_risk_score >= threshold`), the ordering
- * when both fire, the runtime side effect (module SESSION_ID actually
- * changes for module-owned, does NOT for caller-owned), and the sanitizer
- * integration on both ownership paths.
+ * These tests pin: the lock path never rotating on either ownership, the
+ * score trigger still rotating BELOW the lock, the runtime side effect
+ * (module SESSION_ID actually changes for module-owned, does NOT for
+ * caller-owned or for a lock), and the sanitizer integration on every path.
  *
- * Env-var overrides (`SHRIKE_ROTATE_ON_LOCK`, `SHRIKE_ROTATION_THRESHOLD`)
- * are resolved at module load; verifying them requires a fresh import per
- * case. Not exercised here — the defaults ARE what's tested, and a
- * follow-up integration test in a fresh process is the right shape for
- * env-driven overrides.
+ * `SHRIKE_ROTATE_ON_LOCK` is gone. It read as an opt-out and was not one: a
+ * locked session is already above the score threshold, so disabling the
+ * verdict trigger left the score trigger rotating anyway. `SHRIKE_ROTATION_
+ * THRESHOLD` is resolved at module load; verifying it requires a fresh
+ * import per case, so the defaults ARE what is tested here.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -55,6 +63,15 @@ function asModuleOwned(r: any) {
   return r as { rotated: true; owner: 'mcp_client'; reason: string; previous_session_id: string; new_session_id: string; triggering_risk_score?: number; configured_threshold?: number };
 }
 
+/** A lock notice: nothing rotated, and nothing is being recommended either. */
+function asLockNotice(r: any) {
+  expect(r).not.toBeNull();
+  expect(r.rotated).toBe(false);
+  expect(r.rotation_recommended).toBe(false);
+  expect(r.reason).toBe('session_locked');
+  return r as { rotated: false; rotation_recommended: false; owner: 'mcp_client' | 'caller'; reason: 'session_locked'; current_session_id: string; triggering_risk_score?: number; configured_threshold?: number };
+}
+
 function asCallerOwned(r: any) {
   expect(r).not.toBeNull();
   expect(r.rotated).toBe(false);
@@ -71,17 +88,30 @@ function asCallerOwned(r: any) {
 describe('rotateSessionIfTriggered (module-owned) — verdict-based (session_locked)', () => {
   beforeEach(() => __resetSessionIdForTesting(KNOWN_SESSION_ID));
 
-  it('rotates on threat_type === "session_locked" regardless of session_state score', () => {
+  it('does NOT rotate on threat_type === "session_locked"; emits a notice instead', () => {
     const before = getSessionId();
-    const r = asModuleOwned(rotateSessionIfTriggered({
+    const r = asLockNotice(rotateSessionIfTriggered({
       threat_type: 'session_locked',
       session_state: state(0.1),
       effective_session_id: KNOWN_SESSION_ID,
     }));
-    expect(r.reason).toBe('session_locked');
-    expect(r.previous_session_id).toBe(before);
-    expect(r.new_session_id).not.toBe(before);
-    expect(getSessionId()).toBe(r.new_session_id);
+    expect(r.owner).toBe('mcp_client');
+    expect(r.current_session_id).toBe(before);
+    // The whole point: the id the backend locked is the id still in force.
+    expect(getSessionId()).toBe(before);
+  });
+
+  it('does NOT rotate a locked session even when the score is above threshold', () => {
+    // This is the case the old opt-out could not express. The verdict is
+    // checked first precisely so the score branch never sees a lock.
+    const before = getSessionId();
+    const r = asLockNotice(rotateSessionIfTriggered({
+      threat_type: 'session_locked',
+      session_state: state(0.95),
+      effective_session_id: KNOWN_SESSION_ID,
+    }));
+    expect(r.triggering_risk_score).toBe(0.95);
+    expect(getSessionId()).toBe(before);
   });
 
   it('does NOT rotate on unrelated threat_type', () => {
@@ -149,14 +179,16 @@ describe('rotateSessionIfTriggered (module-owned) — score-based (risk >= thres
 describe('rotateSessionIfTriggered (module-owned) — precedence when both fire', () => {
   beforeEach(() => __resetSessionIdForTesting(KNOWN_SESSION_ID));
 
-  it('verdict wins the reason label when session_locked AND score above threshold', () => {
-    const r = asModuleOwned(rotateSessionIfTriggered({
+  it('the lock wins outright: no rotation, whatever the score says', () => {
+    const before = getSessionId();
+    const r = asLockNotice(rotateSessionIfTriggered({
       threat_type: 'session_locked',
       session_state: state(0.95),
       effective_session_id: KNOWN_SESSION_ID,
     }));
-    expect(r.reason).toBe('session_locked'); // verdict is more specific
+    expect(r.reason).toBe('session_locked');
     expect(r.triggering_risk_score).toBe(0.95);
+    expect(getSessionId()).toBe(before);
   });
 });
 
@@ -166,7 +198,7 @@ describe('rotateSessionIfTriggered (module-owned) — runtime side effect', () =
   it('subsequent getSessionId() reflects the rotated ID', () => {
     expect(getSessionId()).toBe(KNOWN_SESSION_ID);
     const r = asModuleOwned(rotateSessionIfTriggered({
-      threat_type: 'session_locked',
+      session_state: state(0.9),
       effective_session_id: KNOWN_SESSION_ID,
     }));
     expect(getSessionId()).toBe(r.new_session_id);
@@ -179,16 +211,31 @@ describe('rotateSessionIfTriggered (module-owned) — runtime side effect', () =
     expect(getSessionId()).toBe(KNOWN_SESSION_ID);
   });
 
+  it('SESSION_ID does NOT change on a lock, however many times it is seen', () => {
+    // A locked session that keeps being hit must keep the same id. Rotating
+    // here is what used to manufacture the "same agent, N rapid rotations"
+    // pattern the correlator reads as an attack signal.
+    expect(getSessionId()).toBe(KNOWN_SESSION_ID);
+    for (let i = 0; i < 3; i++) {
+      asLockNotice(rotateSessionIfTriggered({
+        threat_type: 'session_locked',
+        session_state: state(0.95, i + 1),
+        effective_session_id: KNOWN_SESSION_ID,
+      }));
+      expect(getSessionId()).toBe(KNOWN_SESSION_ID);
+    }
+  });
+
   it('two consecutive rotations produce two distinct IDs; second uses the post-first module id', () => {
     const first = asModuleOwned(rotateSessionIfTriggered({
-      threat_type: 'session_locked',
+      session_state: state(0.9),
       effective_session_id: KNOWN_SESSION_ID,
     }));
     // After the first rotation, effective_session_id for the next call is the
     // newly-minted module SESSION_ID (that's what a subsequent call without
     // a caller-supplied session_id would send).
     const second = asModuleOwned(rotateSessionIfTriggered({
-      threat_type: 'session_locked',
+      session_state: state(0.9),
       effective_session_id: first.new_session_id,
     }));
     expect(first.new_session_id).not.toBe(second.new_session_id);
@@ -202,7 +249,7 @@ describe('rotateSessionIfTriggered (module-owned) — runtime side effect', () =
 // is caller. MCP does NOT mutate its module SESSION_ID; it emits a
 // recommendation and lets the caller decide.
 //
-// This is the §4 fix from the 2026-07-06 smoke test — the caller was passing
+// Regression guard: the caller was passing
 // `session_id: "imds-traj"` and the rotation record was reporting UUIDs that
 // had nothing to do with the caller's namespace. Under the new contract, the
 // caller-owned path echoes back `current_session_id: "imds-traj"` and hands
@@ -212,21 +259,19 @@ describe('rotateSessionIfTriggered (module-owned) — runtime side effect', () =
 describe('rotateSessionIfTriggered (caller-owned) — verdict-based (session_locked)', () => {
   beforeEach(() => __resetSessionIdForTesting(KNOWN_SESSION_ID));
 
-  it('emits recommendation on session_locked; does NOT mutate module SESSION_ID', () => {
+  it('emits a lock notice on session_locked, and suggests nothing', () => {
     const beforeModuleId = getSessionId();
-    const rec = asCallerOwned(rotateSessionIfTriggered({
+    const notice = asLockNotice(rotateSessionIfTriggered({
       threat_type: 'session_locked',
       session_state: state(0.9),
       effective_session_id: CALLER_SESSION_ID,
     }));
-    expect(rec.reason).toBe('session_locked');
-    expect(rec.current_session_id).toBe(CALLER_SESSION_ID);
-    expect(rec.suggested_new_session_id).not.toBe(CALLER_SESSION_ID);
-    expect(rec.suggested_new_session_id).not.toBe(beforeModuleId);
-    // The critical invariant: MCP does NOT mutate its own SESSION_ID when
-    // the caller owns the session — because that mutation would be a no-op
-    // for the caller (who keeps using their own id) AND misleading (previous
-    // vs new UUIDs the caller never sees).
+    expect(notice.owner).toBe('caller');
+    expect(notice.current_session_id).toBe(CALLER_SESSION_ID);
+    // No suggested_new_session_id on this shape: suggesting a fresh id is
+    // suggesting the caller sidestep the lock. The notice exists so the
+    // agent LEARNS the session locked, not so it can route around it.
+    expect((notice as any).suggested_new_session_id).toBeUndefined();
     expect(getSessionId()).toBe(beforeModuleId);
   });
 
@@ -291,7 +336,7 @@ describe('rotateSessionIfTriggered (caller-owned) — score-based', () => {
 describe('sanitized response carries client_session_rotation (module-owned)', () => {
   beforeEach(() => __resetSessionIdForTesting(KNOWN_SESSION_ID));
 
-  it('sanitizeScanResult blocked response with session_locked triggers module-owned rotation', () => {
+  it('sanitizeScanResult blocked response with session_locked emits a notice, not a rotation', () => {
     const result = sanitizeScanResult(
       {
         safe: false,
@@ -312,13 +357,12 @@ describe('sanitized response carries client_session_rotation (module-owned)', ()
       KNOWN_SESSION_ID, // effective_session_id — module fallback in use
       'scan_prompt',
     );
-    const rotation = (result as any).client_session_rotation;
-    expect(rotation).toBeDefined();
-    expect(rotation.rotated).toBe(true);
-    expect(rotation.owner).toBe('mcp_client');
-    expect(rotation.reason).toBe('session_locked');
-    expect(rotation.previous_session_id).toBe(KNOWN_SESSION_ID);
-    expect(rotation.new_session_id).not.toBe(KNOWN_SESSION_ID);
+    const notice = asLockNotice((result as any).client_session_rotation);
+    expect(notice.owner).toBe('mcp_client');
+    expect(notice.current_session_id).toBe(KNOWN_SESSION_ID);
+    // The session the backend locked is the session still in force. A scan
+    // that quarantines must not hand the agent a clean id on the way out.
+    expect(getSessionId()).toBe(KNOWN_SESSION_ID);
     expect((result as any).session_state.session_risk_score).toBe(0.9);
   });
 
@@ -368,7 +412,7 @@ describe('sanitized response carries client_session_rotation (module-owned)', ()
     expect(getSessionId()).toBe(KNOWN_SESSION_ID);
   });
 
-  it('act-plane sanitizeCommandResult also emits module-owned rotation on session_locked', () => {
+  it('act-plane sanitizeCommandResult also refuses to rotate on session_locked', () => {
     const result = sanitizeCommandResult(
       {
         safe: false,
@@ -383,18 +427,16 @@ describe('sanitized response carries client_session_rotation (module-owned)', ()
       KNOWN_SESSION_ID,
       'scan_command',
     );
-    const rotation = (result as any).client_session_rotation;
-    expect(rotation).toBeDefined();
-    expect(rotation.rotated).toBe(true);
-    expect(rotation.owner).toBe('mcp_client');
-    expect(rotation.reason).toBe('session_locked');
+    const notice = asLockNotice((result as any).client_session_rotation);
+    expect(notice.owner).toBe('mcp_client');
+    expect(getSessionId()).toBe(KNOWN_SESSION_ID);
   });
 });
 
 describe('sanitized response carries client_session_rotation (caller-owned)', () => {
   beforeEach(() => __resetSessionIdForTesting(KNOWN_SESSION_ID));
 
-  it('sanitizeScanResult with caller-supplied session_id emits recommendation, not mutation', () => {
+  it('sanitizeScanResult with caller-supplied session_id emits a lock notice, not a recommendation', () => {
     const beforeModuleId = getSessionId();
     const result = sanitizeScanResult(
       {
@@ -416,18 +458,14 @@ describe('sanitized response carries client_session_rotation (caller-owned)', ()
       CALLER_SESSION_ID,
       'scan_prompt',
     );
-    const rec = (result as any).client_session_rotation;
-    expect(rec).toBeDefined();
-    // Discriminant fields for the caller-owned branch
-    expect(rec.rotated).toBe(false);
-    expect(rec.rotation_recommended).toBe(true);
-    expect(rec.owner).toBe('caller');
-    expect(rec.reason).toBe('session_locked');
-    // Namespace correctness — the whole point of the fix. `current_session_id`
-    // is what the caller supplied, not a UUID they've never seen.
-    expect(rec.current_session_id).toBe(CALLER_SESSION_ID);
-    expect(rec.suggested_new_session_id).not.toBe(CALLER_SESSION_ID);
-    // Module SESSION_ID unchanged — MCP did not mutate anything.
+    const notice = asLockNotice((result as any).client_session_rotation);
+    expect(notice.owner).toBe('caller');
+    // Namespace correctness: `current_session_id` is what the caller
+    // supplied, not a UUID they have never seen.
+    expect(notice.current_session_id).toBe(CALLER_SESSION_ID);
+    // And nothing is suggested. A caller who owns the session still must
+    // not be told that minting a new id is the way past a lock.
+    expect(notice.suggested_new_session_id).toBeUndefined();
     expect(getSessionId()).toBe(beforeModuleId);
   });
 

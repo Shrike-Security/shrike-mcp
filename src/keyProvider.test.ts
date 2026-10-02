@@ -33,10 +33,19 @@ describe('EnvKeyProvider', () => {
     expect(provider.name()).toBe('env');
   });
 
-  it('returns null when SHRIKE_API_KEY is not set', async () => {
+  it('returns null when SHRIKE_API_KEY is not set and no credentials file exists', async () => {
     delete process.env.SHRIKE_API_KEY;
-    const provider = new EnvKeyProvider();
-    expect(await provider.getKey()).toBeNull();
+    // Point HOME at an empty directory so a developer's real
+    // ~/.shrike/credentials cannot satisfy the lookup.
+    const originalHome = process.env.HOME;
+    process.env.HOME = await mkdtemp(join(tmpdir(), 'shrike-empty-home-'));
+    try {
+      const provider = new EnvKeyProvider();
+      expect(await provider.getKey()).toBeNull();
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+    }
   });
 });
 

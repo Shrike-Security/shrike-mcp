@@ -11,8 +11,8 @@
  * - After a verdict returned refuse_tier: "block" with threat_type
  *   "session_locked" — call this to confirm the risk score and
  *   session_locked flag before rotating to a fresh session_id.
- * - Before deciding whether to rotate proactively — check if session risk
- *   has crossed the "warn" threshold (0.7).
+ * - Before deciding whether to rotate proactively — check whether session
+ *   risk is rising before it reaches quarantine.
  * - When integrating a new agent and wanting to observe accumulated L9
  *   state without triggering another scan.
  *
@@ -125,9 +125,9 @@ WHEN TO USE:
 WHAT IT RETURNS:
 - exists: whether the L9 correlator has cached state for this session
 - session_risk_score (0.0–1.0, 2dp), session_turn_number
-- session_locked: true when risk >= 0.8 (next scan will short-circuit)
-- refuse_tier: "block" (>= 0.8), "warn" (>= 0.7), or "allow" (< 0.7)
-- session_patterns: canonical multi_turn_* strings when anomaly-gated (risk >= 0.5); empty otherwise
+- session_locked: true when the session is under quarantine (act-plane tools refuse on it until you rotate)
+- refuse_tier: "block", "warn", or "allow" for the session as a whole
+- session_patterns: canonical multi_turn_* strings once accumulated risk warrants them; empty otherwise
 - recovery: canonical rotate-and-restart guidance, only when session_locked
 
 WHAT IT DOES NOT DO:

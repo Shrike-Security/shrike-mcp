@@ -173,29 +173,34 @@ export function getAgentId(): string {
 // Automatic session rotation on quarantine / high-risk
 // ---------------------------------------------------------------------------
 //
-// When a scan response comes back with a session_locked verdict OR a
-// session_state.session_risk_score above SHRIKE_ROTATION_THRESHOLD, the
-// client generates a fresh SESSION_ID for subsequent calls that don't
-// supply their own session_id. The rotated flag is surfaced back to the
-// caller on the response that triggered it, so the agent can explain to
-// its user why the session reset.
+// A LOCKED SESSION IS NEVER ROTATED. The lock is a control the backend
+// applied; rotating past it sidesteps the control rather than clearing it,
+// which is what the backend's own recovery instruction tells the agent not
+// to do. A lock lifts by self-release under a live declared scope, or by an
+// operator. So on threat_type === "session_locked" the client emits a
+// SessionLockedNotice — rotated: false, rotation_recommended: false — and
+// leaves the session id exactly where it is.
 //
-// Two triggers, orthogonal:
-//   1. Verdict-based (SHRIKE_ROTATE_ON_LOCK, default "true"). Rotates when
-//      response.threat_type === "session_locked". This is the safety net —
-//      the correlator has already crossed 0.8 by then.
-//   2. Score-based (SHRIKE_ROTATION_THRESHOLD, default 0.7). Rotates when
-//      response.session_state.session_risk_score >= threshold. This is the
-//      customer knob for "auto-rotate at score X." Set the env var to a
-//      value > 1.0 (e.g. "2") to disable this trigger entirely.
+// Two further reasons this is the right default for a governance client.
+// The client used to manufacture its own attack signature: the correlator
+// watches for "same agent, N rapid rotations, still hitting session_locked",
+// and auto-rotation produced that pattern from our own code. And the opt-out
+// never worked: SHRIKE_ROTATE_ON_LOCK=false skipped the verdict trigger, but
+// a locked session is already above the score threshold, so the score
+// trigger rotated anyway. That env var is gone rather than left as a knob
+// that does nothing.
 //
-// Neither trigger overrides caller-supplied session_id on the tool call.
-// Rotation only shifts the client's fallback; if a caller manages their own
-// session_id, they get the rotation reason on the response and can decide
-// what to do on their end. See the active guidance layer +
-// the symmetric-contract principle.
-
-const ROTATE_ON_LOCK: boolean = process.env.SHRIKE_ROTATE_ON_LOCK !== 'false';
+// What remains is score-based rotation BELOW the lock, which is proactive
+// hygiene rather than evasion:
+//   SHRIKE_ROTATION_THRESHOLD (default 0.7). Rotates when
+//   response.session_state.session_risk_score >= threshold. Set the env var
+//   to a value > 1.0 (e.g. "2") to disable this trigger entirely.
+//
+// Rotation never overrides a caller-supplied session_id on the tool call.
+// It only shifts the client's fallback; a caller who manages their own
+// session_id gets the reason on the response and decides for themselves.
+// The same three shapes ship in the TypeScript and Python SDKs, per the
+// symmetric-contract principle.
 const ROTATION_THRESHOLD: number = (() => {
   const raw = process.env.SHRIKE_ROTATION_THRESHOLD;
   if (raw === undefined || raw === '') return 0.7;
@@ -213,13 +218,13 @@ export interface ModuleOwnedRotation {
   rotated: true;
   /** Who owns the session lifecycle. `mcp_client` = MCP's fallback SESSION_ID rotated in place. */
   owner: 'mcp_client';
-  /** Why the client rotated — "session_locked" verdict, or configured risk-score threshold crossed. */
-  reason: 'session_locked' | 'risk_threshold_exceeded';
+  /** A locked session never rotates, so the score is the only trigger here. */
+  reason: 'risk_threshold_exceeded';
   /** The MCP fallback session_id that was in force before this rotation. */
   previous_session_id: string;
   /** The fresh session_id the MCP client will now use on subsequent calls that don't supply their own. */
   new_session_id: string;
-  /** For "risk_threshold_exceeded", the score that crossed. For "session_locked", the score if the response carried one. */
+  /** The score that crossed the threshold. */
   triggering_risk_score?: number;
   /** The threshold in force at the time of rotation (the constant matters for reproducibility). */
   configured_threshold?: number;
@@ -248,8 +253,8 @@ export interface CallerOwnedRotationRecommendation {
   rotation_recommended: true;
   /** Who owns the session lifecycle. `caller` = the tool caller supplied session_id. */
   owner: 'caller';
-  /** Why MCP is recommending rotation. Same semantics as ModuleOwnedRotation.reason. */
-  reason: 'session_locked' | 'risk_threshold_exceeded';
+  /** A locked session never rotates, so the score is the only trigger here. */
+  reason: 'risk_threshold_exceeded';
   /** The session_id the caller supplied on this tool call, echoed back so integrators can correlate. */
   current_session_id: string;
   /**
@@ -262,11 +267,35 @@ export interface CallerOwnedRotationRecommendation {
 }
 
 /**
- * Rotation record surfaced back to the caller on the response that
- * triggered a rotation (module-owned) or a rotation recommendation
- * (caller-owned). Discriminated union on `rotated`.
+ * Emitted when the backend locked the session. Nothing rotated and nothing
+ * should: a fresh session_id sidesteps the lock instead of clearing it. The
+ * notice still ships so the agent learns the session is locked.
+ *
+ * Discriminant: `rotated: false` + `rotation_recommended: false`. A lock lifts
+ * by `reset_session` under a live declared scope, or by an operator.
  */
-export type SessionRotation = ModuleOwnedRotation | CallerOwnedRotationRecommendation;
+export interface SessionLockedNotice {
+  rotated: false;
+  rotation_recommended: false;
+  /** Whose session the lock landed on. The client does not mutate either. */
+  owner: 'mcp_client' | 'caller';
+  reason: 'session_locked';
+  /** The session_id that is locked, echoed back so integrators can correlate. */
+  current_session_id: string;
+  triggering_risk_score?: number;
+  configured_threshold?: number;
+}
+
+/**
+ * Rotation record surfaced back to the caller on the response that
+ * triggered a rotation (module-owned), a rotation recommendation
+ * (caller-owned), or a lock notice where rotating is refused.
+ * Discriminate on `rotated`, then on `rotation_recommended`.
+ */
+export type SessionRotation =
+  | ModuleOwnedRotation
+  | CallerOwnedRotationRecommendation
+  | SessionLockedNotice;
 
 /**
  * Shape the rotation helper needs to see. Subset of the sanitized response
@@ -305,21 +334,38 @@ export interface RotationTriggerInput {
  * the reason label — it's the more specific cause.
  */
 export function rotateSessionIfTriggered(input: RotationTriggerInput): SessionRotation | null {
-  let reason: SessionRotation['reason'] | null = null;
+  const isCallerOwned = input.effective_session_id !== SESSION_ID;
 
-  if (ROTATE_ON_LOCK && input.threat_type === 'session_locked') {
-    reason = 'session_locked';
-  } else if (
-    ROTATION_THRESHOLD <= 1.0 &&
-    input.session_state &&
-    input.session_state.session_risk_score >= ROTATION_THRESHOLD
-  ) {
-    reason = 'risk_threshold_exceeded';
+  // A locked session is never rotated, on either trigger. Checked BEFORE
+  // the score branch, because a locked session is already above the
+  // threshold — that ordering is exactly what the old opt-out got wrong.
+  if (input.threat_type === 'session_locked') {
+    const notice: SessionLockedNotice = {
+      rotated: false,
+      rotation_recommended: false,
+      owner: isCallerOwned ? 'caller' : 'mcp_client',
+      reason: 'session_locked',
+      current_session_id: input.effective_session_id,
+      configured_threshold: ROTATION_THRESHOLD,
+    };
+    if (input.session_state) {
+      notice.triggering_risk_score = input.session_state.session_risk_score;
+    }
+    console.error(
+      `[session-rotation] owner=${notice.owner} reason=session_locked rotated=false session=${input.effective_session_id.slice(0, 8)}... score=${input.session_state?.session_risk_score ?? 'n/a'} (a lock clears by release, not by rotation)`,
+    );
+    return notice;
   }
 
-  if (!reason) return null;
+  if (
+    ROTATION_THRESHOLD > 1.0 ||
+    !input.session_state ||
+    input.session_state.session_risk_score < ROTATION_THRESHOLD
+  ) {
+    return null;
+  }
 
-  const isCallerOwned = input.effective_session_id !== SESSION_ID;
+  const reason = 'risk_threshold_exceeded' as const;
 
   if (isCallerOwned) {
     const rec: CallerOwnedRotationRecommendation = {
@@ -379,10 +425,11 @@ export const VALID_TOOL_NAMES = [
   'scan_a2a_message', 'scan_agent_card',
   // Scope Tier 1 — declared agent scope surface. See the agent-scope declaration design.
   'scan_declare_scope',
-  // §9.2 tool-poisoning close-out — one-shot scan of a single MCP tool
-  // description/inputSchema. Complements the MCPGateway proxy path which
-  // scans every tools/list automatically. See docs/post-launch-roadmap-2026-07.md §9.2.
+  // One-shot scan of a single MCP tool description/inputSchema. Complements
+  // the MCPGateway proxy path, which scans every tools/list automatically.
   'scan_mcp_schema',
+  // Closes the loop a scan opens: what became of the action it allowed.
+  'report_outcome',
 ] as const;
 
 export type ValidToolName = typeof VALID_TOOL_NAMES[number];

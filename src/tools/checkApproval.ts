@@ -27,10 +27,9 @@ interface ApprovalStatusResponse {
   decided_at?: string;
   decided_via?: string;
   justification?: string;
-  // 2026-07-01: Agent-contract signal — "blocking" means the agent MUST NOT
-  // proceed with any work that depends on this decision; "advisory" means
-  // the agent may defer and continue with unrelated tasks. Defaults to
-  // "advisory" pre-launch.
+  // Agent-contract signal — "blocking" means the agent MUST NOT proceed with
+  // any work that depends on this decision; "advisory" means the agent may
+  // defer and continue with unrelated tasks. Defaults to "advisory".
   enforcement_severity?: 'blocking' | 'advisory';
   expected_response_by_seconds?: number;
 }
@@ -397,7 +396,7 @@ ENFORCEMENT SEVERITY (agent contract): While an approval is pending, approval_co
 - "blocking" — do NOT proceed with the flagged action AND do NOT proceed with any downstream work that depends on its outcome. Park the whole cascade until the decision arrives. This is set by policy for actions where dependent steps would be incorrect if executed before approval (e.g., data pipelines, cascading writes).
 - "advisory" — do NOT proceed with the flagged action, but you MAY defer this task and continue with unrelated work. Come back and check_approval when the user prompts you or when a dependent step needs the decision.
 
-Pre-launch, the default is "advisory". Policy-driven per-action severity ships post-launch.
+The default is "advisory".
 
 Enterprise context: Provides the human-in-the-loop control required for compliance (GDPR Art. 22, SOC2 CC8.1). Every decision is recorded with full audit trail.
 

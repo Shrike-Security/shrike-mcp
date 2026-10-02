@@ -172,10 +172,15 @@ describe('scanSQLQuery', () => {
 
   it('should surface a session_locked verdict with the recovery instruction verbatim', async () => {
     const recoveryInstruction =
-      'Start a new session_id for the next call. This session has ' +
-      'accumulated risk from prior turns that cannot be scanned out; ' +
-      'a fresh session_id is the self-service recovery path. ' +
-      'reset_session is administratively restricted at the block threshold.';
+      'This session is locked. Risk accumulated over earlier turns crossed ' +
+      'the block threshold, so this call was refused by the session lock, ' +
+      'not by anything in its content. The lock holds for a bounded number ' +
+      'of turns, then a short probation in which new evidence re-locks it ' +
+      'for longer. The way back: under a live declared scope, reset_session ' +
+      'releases the session, up to three times per renewal window, every ' +
+      'release audited; otherwise an operator releases it. Until then only ' +
+      'the read-only tools listed here are available. Rotating to a new ' +
+      'session_id sidesteps the lock rather than clearing it.';
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
